@@ -20,7 +20,9 @@
 #define LIBVULKAN_API_GEN_H
 
 #include <vulkan/vulkan.h>
+
 #include <bitset>
+
 #include "driver_gen.h"
 
 namespace vulkan {
@@ -40,7 +42,12 @@ struct InstanceDispatchTable {
     PFN_vkCreateDevice CreateDevice;
     PFN_vkEnumerateDeviceExtensionProperties EnumerateDeviceExtensionProperties;
     PFN_vkGetPhysicalDeviceSparseImageFormatProperties GetPhysicalDeviceSparseImageFormatProperties;
-    PFN_vkEnumeratePhysicalDeviceGroups EnumeratePhysicalDeviceGroups;
+    PFN_vkCreateAndroidSurfaceKHR CreateAndroidSurfaceKHR;
+    PFN_vkDestroySurfaceKHR DestroySurfaceKHR;
+    PFN_vkGetPhysicalDeviceSurfaceSupportKHR GetPhysicalDeviceSurfaceSupportKHR;
+    PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR GetPhysicalDeviceSurfaceCapabilitiesKHR;
+    PFN_vkGetPhysicalDeviceSurfaceFormatsKHR GetPhysicalDeviceSurfaceFormatsKHR;
+    PFN_vkGetPhysicalDeviceSurfacePresentModesKHR GetPhysicalDeviceSurfacePresentModesKHR;
     PFN_vkGetPhysicalDeviceFeatures2 GetPhysicalDeviceFeatures2;
     PFN_vkGetPhysicalDeviceProperties2 GetPhysicalDeviceProperties2;
     PFN_vkGetPhysicalDeviceFormatProperties2 GetPhysicalDeviceFormatProperties2;
@@ -49,15 +56,11 @@ struct InstanceDispatchTable {
     PFN_vkGetPhysicalDeviceMemoryProperties2 GetPhysicalDeviceMemoryProperties2;
     PFN_vkGetPhysicalDeviceSparseImageFormatProperties2 GetPhysicalDeviceSparseImageFormatProperties2;
     PFN_vkGetPhysicalDeviceExternalBufferProperties GetPhysicalDeviceExternalBufferProperties;
-    PFN_vkGetPhysicalDeviceExternalFenceProperties GetPhysicalDeviceExternalFenceProperties;
     PFN_vkGetPhysicalDeviceExternalSemaphoreProperties GetPhysicalDeviceExternalSemaphoreProperties;
-    PFN_vkDestroySurfaceKHR DestroySurfaceKHR;
-    PFN_vkGetPhysicalDeviceSurfaceSupportKHR GetPhysicalDeviceSurfaceSupportKHR;
-    PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR GetPhysicalDeviceSurfaceCapabilitiesKHR;
-    PFN_vkGetPhysicalDeviceSurfaceFormatsKHR GetPhysicalDeviceSurfaceFormatsKHR;
-    PFN_vkGetPhysicalDeviceSurfacePresentModesKHR GetPhysicalDeviceSurfacePresentModesKHR;
+    PFN_vkGetPhysicalDeviceExternalFenceProperties GetPhysicalDeviceExternalFenceProperties;
+    PFN_vkEnumeratePhysicalDeviceGroups EnumeratePhysicalDeviceGroups;
     PFN_vkGetPhysicalDevicePresentRectanglesKHR GetPhysicalDevicePresentRectanglesKHR;
-    PFN_vkCreateAndroidSurfaceKHR CreateAndroidSurfaceKHR;
+    PFN_vkGetPhysicalDeviceToolProperties GetPhysicalDeviceToolProperties;
     // clang-format on
 };
 
@@ -97,6 +100,7 @@ struct DeviceDispatchTable {
     PFN_vkCreateQueryPool CreateQueryPool;
     PFN_vkDestroyQueryPool DestroyQueryPool;
     PFN_vkGetQueryPoolResults GetQueryPoolResults;
+    PFN_vkResetQueryPool ResetQueryPool;
     PFN_vkCreateBuffer CreateBuffer;
     PFN_vkDestroyBuffer DestroyBuffer;
     PFN_vkCreateBufferView CreateBufferView;
@@ -184,32 +188,80 @@ struct DeviceDispatchTable {
     PFN_vkCmdNextSubpass CmdNextSubpass;
     PFN_vkCmdEndRenderPass CmdEndRenderPass;
     PFN_vkCmdExecuteCommands CmdExecuteCommands;
-    PFN_vkBindBufferMemory2 BindBufferMemory2;
-    PFN_vkBindImageMemory2 BindImageMemory2;
-    PFN_vkGetDeviceGroupPeerMemoryFeatures GetDeviceGroupPeerMemoryFeatures;
-    PFN_vkCmdSetDeviceMask CmdSetDeviceMask;
-    PFN_vkCmdDispatchBase CmdDispatchBase;
-    PFN_vkGetImageMemoryRequirements2 GetImageMemoryRequirements2;
-    PFN_vkGetBufferMemoryRequirements2 GetBufferMemoryRequirements2;
-    PFN_vkGetImageSparseMemoryRequirements2 GetImageSparseMemoryRequirements2;
-    PFN_vkTrimCommandPool TrimCommandPool;
-    PFN_vkGetDeviceQueue2 GetDeviceQueue2;
-    PFN_vkCreateSamplerYcbcrConversion CreateSamplerYcbcrConversion;
-    PFN_vkDestroySamplerYcbcrConversion DestroySamplerYcbcrConversion;
-    PFN_vkCreateDescriptorUpdateTemplate CreateDescriptorUpdateTemplate;
-    PFN_vkDestroyDescriptorUpdateTemplate DestroyDescriptorUpdateTemplate;
-    PFN_vkUpdateDescriptorSetWithTemplate UpdateDescriptorSetWithTemplate;
-    PFN_vkGetDescriptorSetLayoutSupport GetDescriptorSetLayoutSupport;
     PFN_vkCreateSwapchainKHR CreateSwapchainKHR;
     PFN_vkDestroySwapchainKHR DestroySwapchainKHR;
     PFN_vkGetSwapchainImagesKHR GetSwapchainImagesKHR;
     PFN_vkAcquireNextImageKHR AcquireNextImageKHR;
     PFN_vkQueuePresentKHR QueuePresentKHR;
+    PFN_vkTrimCommandPool TrimCommandPool;
+    PFN_vkGetDeviceGroupPeerMemoryFeatures GetDeviceGroupPeerMemoryFeatures;
+    PFN_vkBindBufferMemory2 BindBufferMemory2;
+    PFN_vkBindImageMemory2 BindImageMemory2;
+    PFN_vkCmdSetDeviceMask CmdSetDeviceMask;
     PFN_vkGetDeviceGroupPresentCapabilitiesKHR GetDeviceGroupPresentCapabilitiesKHR;
     PFN_vkGetDeviceGroupSurfacePresentModesKHR GetDeviceGroupSurfacePresentModesKHR;
     PFN_vkAcquireNextImage2KHR AcquireNextImage2KHR;
+    PFN_vkCmdDispatchBase CmdDispatchBase;
+    PFN_vkCreateDescriptorUpdateTemplate CreateDescriptorUpdateTemplate;
+    PFN_vkDestroyDescriptorUpdateTemplate DestroyDescriptorUpdateTemplate;
+    PFN_vkUpdateDescriptorSetWithTemplate UpdateDescriptorSetWithTemplate;
+    PFN_vkGetBufferMemoryRequirements2 GetBufferMemoryRequirements2;
+    PFN_vkGetImageMemoryRequirements2 GetImageMemoryRequirements2;
+    PFN_vkGetImageSparseMemoryRequirements2 GetImageSparseMemoryRequirements2;
+    PFN_vkGetDeviceBufferMemoryRequirements GetDeviceBufferMemoryRequirements;
+    PFN_vkGetDeviceImageMemoryRequirements GetDeviceImageMemoryRequirements;
+    PFN_vkGetDeviceImageSparseMemoryRequirements GetDeviceImageSparseMemoryRequirements;
+    PFN_vkCreateSamplerYcbcrConversion CreateSamplerYcbcrConversion;
+    PFN_vkDestroySamplerYcbcrConversion DestroySamplerYcbcrConversion;
+    PFN_vkGetDeviceQueue2 GetDeviceQueue2;
+    PFN_vkGetDescriptorSetLayoutSupport GetDescriptorSetLayoutSupport;
+    PFN_vkCreateRenderPass2 CreateRenderPass2;
+    PFN_vkCmdBeginRenderPass2 CmdBeginRenderPass2;
+    PFN_vkCmdNextSubpass2 CmdNextSubpass2;
+    PFN_vkCmdEndRenderPass2 CmdEndRenderPass2;
+    PFN_vkGetSemaphoreCounterValue GetSemaphoreCounterValue;
+    PFN_vkWaitSemaphores WaitSemaphores;
+    PFN_vkSignalSemaphore SignalSemaphore;
     PFN_vkGetAndroidHardwareBufferPropertiesANDROID GetAndroidHardwareBufferPropertiesANDROID;
     PFN_vkGetMemoryAndroidHardwareBufferANDROID GetMemoryAndroidHardwareBufferANDROID;
+    PFN_vkCmdDrawIndirectCount CmdDrawIndirectCount;
+    PFN_vkCmdDrawIndexedIndirectCount CmdDrawIndexedIndirectCount;
+    PFN_vkGetBufferOpaqueCaptureAddress GetBufferOpaqueCaptureAddress;
+    PFN_vkGetBufferDeviceAddress GetBufferDeviceAddress;
+    PFN_vkGetDeviceMemoryOpaqueCaptureAddress GetDeviceMemoryOpaqueCaptureAddress;
+    PFN_vkCmdSetCullMode CmdSetCullMode;
+    PFN_vkCmdSetFrontFace CmdSetFrontFace;
+    PFN_vkCmdSetPrimitiveTopology CmdSetPrimitiveTopology;
+    PFN_vkCmdSetViewportWithCount CmdSetViewportWithCount;
+    PFN_vkCmdSetScissorWithCount CmdSetScissorWithCount;
+    PFN_vkCmdBindVertexBuffers2 CmdBindVertexBuffers2;
+    PFN_vkCmdSetDepthTestEnable CmdSetDepthTestEnable;
+    PFN_vkCmdSetDepthWriteEnable CmdSetDepthWriteEnable;
+    PFN_vkCmdSetDepthCompareOp CmdSetDepthCompareOp;
+    PFN_vkCmdSetDepthBoundsTestEnable CmdSetDepthBoundsTestEnable;
+    PFN_vkCmdSetStencilTestEnable CmdSetStencilTestEnable;
+    PFN_vkCmdSetStencilOp CmdSetStencilOp;
+    PFN_vkCmdSetRasterizerDiscardEnable CmdSetRasterizerDiscardEnable;
+    PFN_vkCmdSetDepthBiasEnable CmdSetDepthBiasEnable;
+    PFN_vkCmdSetPrimitiveRestartEnable CmdSetPrimitiveRestartEnable;
+    PFN_vkCreatePrivateDataSlot CreatePrivateDataSlot;
+    PFN_vkDestroyPrivateDataSlot DestroyPrivateDataSlot;
+    PFN_vkSetPrivateData SetPrivateData;
+    PFN_vkGetPrivateData GetPrivateData;
+    PFN_vkCmdCopyBuffer2 CmdCopyBuffer2;
+    PFN_vkCmdCopyImage2 CmdCopyImage2;
+    PFN_vkCmdBlitImage2 CmdBlitImage2;
+    PFN_vkCmdCopyBufferToImage2 CmdCopyBufferToImage2;
+    PFN_vkCmdCopyImageToBuffer2 CmdCopyImageToBuffer2;
+    PFN_vkCmdResolveImage2 CmdResolveImage2;
+    PFN_vkCmdSetEvent2 CmdSetEvent2;
+    PFN_vkCmdResetEvent2 CmdResetEvent2;
+    PFN_vkCmdWaitEvents2 CmdWaitEvents2;
+    PFN_vkCmdPipelineBarrier2 CmdPipelineBarrier2;
+    PFN_vkQueueSubmit2 QueueSubmit2;
+    PFN_vkCmdWriteTimestamp2 CmdWriteTimestamp2;
+    PFN_vkCmdBeginRendering CmdBeginRendering;
+    PFN_vkCmdEndRendering CmdEndRendering;
     // clang-format on
 };
 

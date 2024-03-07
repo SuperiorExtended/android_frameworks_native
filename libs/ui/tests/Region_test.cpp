@@ -152,5 +152,32 @@ TEST_F(RegionTest, Random_TJunction) {
     }
 }
 
+TEST_F(RegionTest, EqualsToSelf) {
+    Region touchableRegion;
+    touchableRegion.orSelf(Rect(0, 0, 100, 100));
+
+    ASSERT_TRUE(touchableRegion.contains(50, 50));
+
+    // Compiler prevents us from directly calling 'touchableRegion = touchableRegion'
+    Region& referenceTouchableRegion = touchableRegion;
+    touchableRegion = referenceTouchableRegion;
+
+    ASSERT_FALSE(touchableRegion.isEmpty());
+
+    ASSERT_TRUE(touchableRegion.contains(50, 50));
+}
+
+TEST_F(RegionTest, RegionHash) {
+    Region region1;
+    region1.addRectUnchecked(10, 20, 30, 40);
+    region1.addRectUnchecked(40, 30, 20, 10);
+
+    Region region2;
+    region2.addRectUnchecked(11, 20, 30, 40);
+    region2.addRectUnchecked(40, 31, 20, 10);
+
+    EXPECT_NE(std::hash<Region>{}(region1), std::hash<Region>{}(region2));
+}
+
 }; // namespace android
 

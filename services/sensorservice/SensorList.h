@@ -36,12 +36,19 @@ namespace SensorServiceUtil {
 
 class SensorList : public Dumpable {
 public:
-    // After SensorInterface * is added into SensorList, it can be assumed that SensorList own the
-    // object it pointed to and the object should not be released elsewhere.
-    bool add(int handle, SensorInterface* si, bool isForDebug = false, bool isVirtual = false);
+    struct Entry {
+        std::shared_ptr<SensorInterface> si;
+        const bool isForDebug;
+        const bool isVirtual;
+        const int deviceId;
+        Entry(std::shared_ptr<SensorInterface> si_, bool debug_, bool virtual_, int deviceId_) :
+            si(std::move(si_)), isForDebug(debug_), isVirtual(virtual_), deviceId(deviceId_) {
+        }
+    };
 
-    // After a handle is removed, the object that SensorInterface * pointing to may get deleted if
-    // no more sp<> of the same object exist.
+    // SensorList owns the SensorInterface pointer.
+    bool add(int handle, std::shared_ptr<SensorInterface> si, bool isForDebug = false,
+             bool isVirtual = false, int deviceId = RuntimeSensor::DEFAULT_DEVICE_ID);
     bool remove(int handle);
 
     inline bool hasAnySensor() const { return mHandleMap.size() > 0;}
@@ -51,9 +58,12 @@ public:
     const Vector<Sensor> getUserDebugSensors() const;
     const Vector<Sensor> getDynamicSensors() const;
     const Vector<Sensor> getVirtualSensors() const;
+    const Vector<Sensor> getRuntimeSensors(int deviceId) const;
 
     String8 getName(int handle) const;
-    sp<SensorInterface> getInterface(int handle) const;
+    String8 getStringType(int handle) const;
+
+    std::shared_ptr<SensorInterface> getInterface(int handle) const;
     bool isNewHandle(int handle) const;
 
     // Iterate through Sensor in sensor list and perform operation f on each Sensor object.
@@ -67,24 +77,6 @@ public:
     template <typename TF>
     void forEachSensor(const TF& f) const;
 
-    const Sensor& getNonSensor() const { return mNonSensor;}
-
-    // Dumpable interface
-    virtual std::string dump() const override;
-
-    virtual ~SensorList();
-private:
-    struct Entry {
-        sp<SensorInterface> si;
-        const bool isForDebug;
-        const bool isVirtual;
-        Entry(SensorInterface* si_, bool debug_, bool virtual_) :
-            si(si_), isForDebug(debug_), isVirtual(virtual_) {
-        }
-    };
-
-    const static Sensor mNonSensor; //.getName() == "unknown",
-
     // Iterate through Entry in sensor list and perform operation f on each Entry.
     //
     // TF is a function with the signature:
@@ -95,6 +87,16 @@ private:
     // same SensorList object on which forEachSensor is invoked.
     template <typename TF>
     void forEachEntry(const TF& f) const;
+
+    const Sensor& getNonSensor() const { return mNonSensor;}
+
+    // Dumpable interface
+    virtual std::string dump() const override;
+    virtual void dump(util::ProtoOutputStream* proto) const override;
+
+    virtual ~SensorList();
+private:
+    const static Sensor mNonSensor; //.getName() == "unknown",
 
     template <typename T, typename TF>
     T getOne(int handle, const TF& accessor, T def = T()) const;

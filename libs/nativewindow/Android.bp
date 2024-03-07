@@ -12,6 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+package {
+    default_applicable_licenses: [
+        "frameworks_native_libs_nativewindow_license",
+    ],
+}
+
+// Added automatically by a large-scale-change
+// See: http://go/android-license-faq
+license {
+    name: "frameworks_native_libs_nativewindow_license",
+    visibility: [":__subpackages__"],
+    license_kinds: [
+        "SPDX-license-identifier-Apache-2.0",
+    ],
+    license_text: [
+        "NOTICE",
+    ],
+}
+
 ndk_headers {
     name: "libnativewindow_ndk_headers",
     from: "include/android",
@@ -24,7 +43,16 @@ ndk_headers {
 cc_library_headers {
     name: "libnativewindow_headers",
     export_include_dirs: ["include"],
-    vendor_available: false,
+    vendor_available: true,
+    // TODO(b/153609531): remove when no longer needed.
+    native_bridge_supported: true,
+    min_sdk_version: "29",
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.media.swcodec",
+        "test_com.android.media.swcodec",
+    ],
+    host_supported: true,
 }
 
 ndk_library {
@@ -33,26 +61,33 @@ ndk_library {
 
     // Android O
     first_version: "26",
+    export_header_libs: [
+        "libnativewindow_ndk_headers",
+    ],
 }
 
 cc_library {
     name: "libnativewindow",
+    llndk: {
+        symbol_file: "libnativewindow.map.txt",
+        unversioned: true,
+        override_export_include_dirs: [
+            "include",
+        ],
+        export_llndk_headers: [
+            "libarect_headers",
+        ],
+    },
     export_include_dirs: [
         "include",
         "include-private",
     ],
-
-    clang: true,
 
     cflags: [
         "-Wall",
         "-Werror",
         "-Wno-enum-compare",
         "-Wno-unused-function",
-    ],
-
-    cppflags: [
-        "-std=c++1z"
     ],
 
     version_script: "libnativewindow.map.txt",
@@ -63,39 +98,38 @@ cc_library {
     ],
 
     shared_libs: [
-        "libhardware",
         "libcutils",
         "liblog",
         "libutils",
         "libui",
+        "libbinder",
+        "libbinder_ndk",
         "android.hardware.graphics.common@1.1",
     ],
 
     static_libs: [
         "libarect",
         "libgrallocusage",
+        "libgui_aidl_static",
     ],
 
     header_libs: [
+        "libgui_headers",
+        "libarect_headers",
         "libnativebase_headers",
         "libnativewindow_headers",
     ],
 
     // headers we include in our public headers
-    export_static_lib_headers: [
-        "libarect",
-    ],
-
     export_header_lib_headers: [
+        "libarect_headers",
         "libnativebase_headers",
     ],
-}
 
-llndk_library {
-    name: "libnativewindow",
-    symbol_file: "libnativewindow.map.txt",
-    unversioned: true,
-    export_include_dirs: ["include"],
+    stubs: {
+        symbol_file: "libnativewindow.map.txt",
+        versions: ["29"],
+    },
 }
 
 subdirs = ["tests"]

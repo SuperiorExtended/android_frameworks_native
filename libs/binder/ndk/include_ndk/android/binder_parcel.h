@@ -26,15 +26,16 @@
 
 #pragma once
 
-#include <sys/cdefs.h>
-
 #include <android/binder_status.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <sys/cdefs.h>
+#include <uchar.h>
 
 struct AIBinder;
 typedef struct AIBinder AIBinder;
 
 __BEGIN_DECLS
-#if __ANDROID_API__ >= __ANDROID_API_Q__
 
 /**
  * This object represents a package of data that can be sent between processes. When transacting, an
@@ -48,16 +49,52 @@ typedef struct AParcel AParcel;
 /**
  * Cleans up a parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel A parcel returned by AIBinder_prepareTransaction or AIBinder_transact when a
  * transaction is being aborted.
  */
 void AParcel_delete(AParcel* parcel) __INTRODUCED_IN(29);
 
 /**
+ * Sets the position within the parcel.
+ *
+ * This must be called with a position that has been previously returned from
+ * AParcel_getDataPosition. If writes are made after setting the data position, they must
+ * be made in the exact same sequence used before resetting data position. Writing over
+ * objects such as binders or file descriptors is not supported.
+ *
+ * Available since API level 29.
+ *
+ * \param parcel The parcel of which to set the position.
+ * \param position Position of the parcel to set. This must be a value returned by
+ * AParcel_getDataPosition. Positions are constant for a given parcel between processes.
+ *
+ * \return STATUS_OK on success. If position is negative, then STATUS_BAD_VALUE will be returned.
+ */
+binder_status_t AParcel_setDataPosition(const AParcel* parcel, int32_t position)
+        __INTRODUCED_IN(29);
+
+/**
+ * Gets the current position within the parcel.
+ *
+ * Available since API level 29.
+ *
+ * \param parcel The parcel of which to get the position.
+ *
+ * \return The size of the parcel. This will always be greater than 0. The values returned by this
+ * function before and after calling various reads and writes are not defined. Only the delta
+ * between two positions between a specific sequence of calls is defined. For instance, if position
+ * is X, writeBool is called, and then position is Y, readBool can be called from position X will
+ * return the same value, and then position will be Y.
+ */
+int32_t AParcel_getDataPosition(const AParcel* parcel) __INTRODUCED_IN(29);
+
+/**
  * This is called to allocate a buffer for a C-style string (null-terminated). The returned buffer
- * should be at least length bytes. This includes space for a null terminator. length will always be
- * strictly less than or equal to the maximum size that can be held in a size_t and will always be
- * greater than 0.
+ * should be at least length bytes. This includes space for a null terminator. For a string, length
+ * will always be strictly less than or equal to the maximum size that can be held in a size_t and
+ * will always be greater than 0. However, if a 'null' string is being read, length will be -1.
  *
  * See also AParcel_readString.
  *
@@ -65,31 +102,35 @@ void AParcel_delete(AParcel* parcel) __INTRODUCED_IN(29);
  *
  * \param stringData some external representation of a string
  * \param length the length of the buffer needed to fill (including the null-terminator)
+ * \param buffer a buffer of size 'length' or null if allocation failed.
  *
- * \return a buffer of size 'length' or null if allocation failed.
+ * \return true if the allocation succeeded, false otherwise. If length is -1, a true return here
+ * means that a 'null' value (or equivalent) was successfully stored.
  */
-typedef char* (*AParcel_stringAllocator)(void* stringData, size_t length);
+typedef bool (*AParcel_stringAllocator)(void* stringData, int32_t length, char** buffer);
 
 /**
- * This is called to allocate an array of size 'length'.
+ * This is called to allocate an array of size 'length'. If length is -1, then a 'null' array (or
+ * equivalent) should be created.
  *
  * See also AParcel_readStringArray
  *
  * \param arrayData some external representation of an array
  * \param length the length to allocate this array to
  *
- * \return true if allocation succeeded
+ * \return true if allocation succeeded. If length is -1, a true return here means that a 'null'
+ * value (or equivalent) was successfully stored.
  */
-typedef bool (*AParcel_stringArrayAllocator)(void* arrayData, size_t length);
+typedef bool (*AParcel_stringArrayAllocator)(void* arrayData, int32_t length);
 
 /**
  * This is called to allocate a string inside of an array that was allocated by an
  * AParcel_stringArrayAllocator.
  *
  * The index returned will always be within the range [0, length of arrayData). The returned buffer
- * should be at least length bytes. This includes space for a null-terminator. length will always be
- * strictly less than or equal to the maximum size that can be held in a size_t and will always be
- * greater than 0.
+ * should be at least length bytes. This includes space for a null-terminator. For a string, length
+ * will always be strictly less than or equal to the maximum size that can be held in a size_t and
+ * will always be greater than 0. However, if a 'null' string is being read, length will be -1.
  *
  * See also AParcel_readStringArray
  *
@@ -97,10 +138,13 @@ typedef bool (*AParcel_stringArrayAllocator)(void* arrayData, size_t length);
  * \param index the index at which a string should be allocated.
  * \param length the length of the string to be allocated at this index. See also
  * AParcel_stringAllocator. This includes the length required for a null-terminator.
+ * \param buffer a buffer of size 'length' or null if allocation failed.
  *
- * \return a buffer of size 'length' or null if allocation failed.
+ * \return true if the allocation succeeded, false otherwise. If length is -1, a true return here
+ * means that a 'null' value (or equivalent) was successfully stored.
  */
-typedef char* (*AParcel_stringArrayElementAllocator)(void* arrayData, size_t index, size_t length);
+typedef bool (*AParcel_stringArrayElementAllocator)(void* arrayData, size_t index, int32_t length,
+                                                    char** buffer);
 
 /**
  * This returns the length and buffer of an array at a specific index in an arrayData object.
@@ -110,13 +154,56 @@ typedef char* (*AParcel_stringArrayElementAllocator)(void* arrayData, size_t ind
  * \param arrayData some external representation of an array.
  * \param index the index at which a string should be allocated.
  * \param outLength an out parameter for the length of the string at the specified index. This
- * should not include the length for a null-terminator if there is one.
+ * should not include the length for a null-terminator if there is one. If the object at this index
+ * is 'null', then this should be set to -1.
  *
  * \param a buffer of size outLength or more representing the string at the provided index. This is
- * not required to be null-terminated.
+ * not required to be null-terminated. If the object at index is null, then this should be null.
  */
 typedef const char* (*AParcel_stringArrayElementGetter)(const void* arrayData, size_t index,
-                                                        size_t* outLength);
+                                                        int32_t* outLength);
+
+/**
+ * This is called to allocate an array of size 'length'. If length is -1, then a 'null' array (or
+ * equivalent) should be created.
+ *
+ * See also AParcel_readParcelableArray
+ *
+ * \param arrayData some external representation of an array
+ * \param length the length to allocate this array to
+ *
+ * \return true if allocation succeeded. If length is -1, a true return here means that a 'null'
+ * value (or equivalent) was successfully stored.
+ */
+typedef bool (*AParcel_parcelableArrayAllocator)(void* arrayData, int32_t length);
+
+/**
+ * This is called to parcel the underlying data from an arrayData object at index.
+ *
+ * See also AParcel_writeParcelableArray
+ *
+ * \param parcel parcel to write the parcelable to
+ * \param arrayData some external representation of an array of parcelables (a user-defined type).
+ * \param index the index of the value to be retrieved.
+ *
+ * \return status (usually returned from other parceling functions). STATUS_OK for success.
+ */
+typedef binder_status_t (*AParcel_writeParcelableElement)(AParcel* parcel, const void* arrayData,
+                                                          size_t index);
+
+/**
+ * This is called to set an underlying value in an arrayData object at index.
+ *
+ * See also AParcel_readParcelableArray
+ *
+ * \param parcel parcel to read the parcelable from
+ * \param arrayData some external representation of an array of parcelables (a user-defined type).
+ * \param index the index of the value to be set.
+ *
+ * \return status (usually returned from other parceling functions). STATUS_OK for success.
+ */
+typedef binder_status_t (*AParcel_readParcelableElement)(const AParcel* parcel, void* arrayData,
+                                                         size_t index);
 
 // @START-PRIMITIVE-VECTOR-GETTERS
 /**
@@ -124,109 +211,127 @@ typedef const char* (*AParcel_stringArrayElementGetter)(const void* arrayData, s
  *
  * The implementation of this function should allocate a contiguous array of size 'length' and
  * return that underlying buffer to be filled out. If there is an error or length is 0, null may be
- * returned.
+ * returned. If length is -1, this should allocate some representation of a null array.
  *
  * See also AParcel_readInt32Array
  *
  * \param arrayData some external representation of an array of int32_t.
  * \param length the length to allocate arrayData to.
+ * \param outBuffer a buffer of int32_t of size 'length' (if length is >= 0, if length is 0, this
+ * may be nullptr).
  *
- * \return a buffer of int32_t of size 'length'.
+ * \return whether or not the allocation was successful (or whether a null array is represented when
+ * length is -1).
  */
-typedef int32_t* (*AParcel_int32ArrayAllocator)(void* arrayData, size_t length);
+typedef bool (*AParcel_int32ArrayAllocator)(void* arrayData, int32_t length, int32_t** outBuffer);
 
 /**
  * This is called to get the underlying data from an arrayData object.
  *
  * The implementation of this function should allocate a contiguous array of size 'length' and
  * return that underlying buffer to be filled out. If there is an error or length is 0, null may be
- * returned.
+ * returned. If length is -1, this should allocate some representation of a null array.
  *
  * See also AParcel_readUint32Array
  *
  * \param arrayData some external representation of an array of uint32_t.
  * \param length the length to allocate arrayData to.
+ * \param outBuffer a buffer of uint32_t of size 'length' (if length is >= 0, if length is 0, this
+ * may be nullptr).
  *
- * \return a buffer of uint32_t of size 'length'.
+ * \return whether or not the allocation was successful (or whether a null array is represented when
+ * length is -1).
  */
-typedef uint32_t* (*AParcel_uint32ArrayAllocator)(void* arrayData, size_t length);
+typedef bool (*AParcel_uint32ArrayAllocator)(void* arrayData, int32_t length, uint32_t** outBuffer);
 
 /**
  * This is called to get the underlying data from an arrayData object.
  *
  * The implementation of this function should allocate a contiguous array of size 'length' and
  * return that underlying buffer to be filled out. If there is an error or length is 0, null may be
- * returned.
+ * returned. If length is -1, this should allocate some representation of a null array.
  *
  * See also AParcel_readInt64Array
  *
  * \param arrayData some external representation of an array of int64_t.
  * \param length the length to allocate arrayData to.
+ * \param outBuffer a buffer of int64_t of size 'length' (if length is >= 0, if length is 0, this
+ * may be nullptr).
  *
- * \return a buffer of int64_t of size 'length'.
+ * \return whether or not the allocation was successful (or whether a null array is represented when
+ * length is -1).
  */
-typedef int64_t* (*AParcel_int64ArrayAllocator)(void* arrayData, size_t length);
+typedef bool (*AParcel_int64ArrayAllocator)(void* arrayData, int32_t length, int64_t** outBuffer);
 
 /**
  * This is called to get the underlying data from an arrayData object.
  *
  * The implementation of this function should allocate a contiguous array of size 'length' and
  * return that underlying buffer to be filled out. If there is an error or length is 0, null may be
- * returned.
+ * returned. If length is -1, this should allocate some representation of a null array.
  *
  * See also AParcel_readUint64Array
  *
  * \param arrayData some external representation of an array of uint64_t.
  * \param length the length to allocate arrayData to.
+ * \param outBuffer a buffer of uint64_t of size 'length' (if length is >= 0, if length is 0, this
+ * may be nullptr).
  *
- * \return a buffer of uint64_t of size 'length'.
+ * \return whether or not the allocation was successful (or whether a null array is represented when
+ * length is -1).
  */
-typedef uint64_t* (*AParcel_uint64ArrayAllocator)(void* arrayData, size_t length);
+typedef bool (*AParcel_uint64ArrayAllocator)(void* arrayData, int32_t length, uint64_t** outBuffer);
 
 /**
  * This is called to get the underlying data from an arrayData object.
  *
  * The implementation of this function should allocate a contiguous array of size 'length' and
  * return that underlying buffer to be filled out. If there is an error or length is 0, null may be
- * returned.
+ * returned. If length is -1, this should allocate some representation of a null array.
  *
  * See also AParcel_readFloatArray
  *
  * \param arrayData some external representation of an array of float.
  * \param length the length to allocate arrayData to.
+ * \param outBuffer a buffer of float of size 'length' (if length is >= 0, if length is 0, this may
+ * be nullptr).
  *
- * \return a buffer of float of size 'length'.
+ * \return whether or not the allocation was successful (or whether a null array is represented when
+ * length is -1).
  */
-typedef float* (*AParcel_floatArrayAllocator)(void* arrayData, size_t length);
+typedef bool (*AParcel_floatArrayAllocator)(void* arrayData, int32_t length, float** outBuffer);
 
 /**
  * This is called to get the underlying data from an arrayData object.
  *
  * The implementation of this function should allocate a contiguous array of size 'length' and
  * return that underlying buffer to be filled out. If there is an error or length is 0, null may be
- * returned.
+ * returned. If length is -1, this should allocate some representation of a null array.
  *
  * See also AParcel_readDoubleArray
  *
  * \param arrayData some external representation of an array of double.
  * \param length the length to allocate arrayData to.
+ * \param outBuffer a buffer of double of size 'length' (if length is >= 0, if length is 0, this may
+ * be nullptr).
  *
- * \return a buffer of double of size 'length'.
+ * \return whether or not the allocation was successful (or whether a null array is represented when
+ * length is -1).
  */
-typedef double* (*AParcel_doubleArrayAllocator)(void* arrayData, size_t length);
+typedef bool (*AParcel_doubleArrayAllocator)(void* arrayData, int32_t length, double** outBuffer);
 
 /**
  * This allocates an array of size 'length' inside of arrayData and returns whether or not there was
- * a success.
+ * a success. If length is -1, then this should allocate some representation of a null array.
  *
  * See also AParcel_readBoolArray
  *
  * \param arrayData some external representation of an array of bool.
- * \param length the length to allocate arrayData to.
+ * \param length the length to allocate arrayData to (or -1 if this represents a null array).
  *
  * \return whether the allocation succeeded.
  */
-typedef bool (*AParcel_boolArrayAllocator)(void* arrayData, size_t length);
+typedef bool (*AParcel_boolArrayAllocator)(void* arrayData, int32_t length);
 
 /**
  * This is called to get the underlying data from an arrayData object at index.
@@ -256,38 +361,46 @@ typedef void (*AParcel_boolArraySetter)(void* arrayData, size_t index, bool valu
  *
  * The implementation of this function should allocate a contiguous array of size 'length' and
  * return that underlying buffer to be filled out. If there is an error or length is 0, null may be
- * returned.
+ * returned. If length is -1, this should allocate some representation of a null array.
  *
  * See also AParcel_readCharArray
  *
  * \param arrayData some external representation of an array of char16_t.
  * \param length the length to allocate arrayData to.
+ * \param outBuffer a buffer of char16_t of size 'length' (if length is >= 0, if length is 0, this
+ * may be nullptr).
  *
- * \return a buffer of char16_t of size 'length'.
+ * \return whether or not the allocation was successful (or whether a null array is represented when
+ * length is -1).
  */
-typedef char16_t* (*AParcel_charArrayAllocator)(void* arrayData, size_t length);
+typedef bool (*AParcel_charArrayAllocator)(void* arrayData, int32_t length, char16_t** outBuffer);
 
 /**
  * This is called to get the underlying data from an arrayData object.
  *
  * The implementation of this function should allocate a contiguous array of size 'length' and
  * return that underlying buffer to be filled out. If there is an error or length is 0, null may be
- * returned.
+ * returned. If length is -1, this should allocate some representation of a null array.
  *
  * See also AParcel_readByteArray
  *
  * \param arrayData some external representation of an array of int8_t.
  * \param length the length to allocate arrayData to.
+ * \param outBuffer a buffer of int8_t of size 'length' (if length is >= 0, if length is 0, this may
+ * be nullptr).
  *
- * \return a buffer of int8_t of size 'length'.
+ * \return whether or not the allocation was successful (or whether a null array is represented when
+ * length is -1).
  */
-typedef int8_t* (*AParcel_byteArrayAllocator)(void* arrayData, size_t length);
+typedef bool (*AParcel_byteArrayAllocator)(void* arrayData, int32_t length, int8_t** outBuffer);
 
 // @END-PRIMITIVE-VECTOR-GETTERS
 
 /**
  * Writes an AIBinder to the next location in a non-null parcel. Can be null. This does not take any
  * refcounts of ownership of the binder from the client.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to write to.
  * \param binder the value to write to the parcel.
@@ -297,29 +410,17 @@ typedef int8_t* (*AParcel_byteArrayAllocator)(void* arrayData, size_t length);
 binder_status_t AParcel_writeStrongBinder(AParcel* parcel, AIBinder* binder) __INTRODUCED_IN(29);
 
 /**
- * Reads an AIBinder from the next location in a non-null parcel. This will fail if the binder is
- * non-null. One strong ref-count of ownership is passed to the caller of this function.
+ * Reads an AIBinder from the next location in a non-null parcel. One strong ref-count of ownership
+ * is passed to the caller of this function.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to read from.
- * \param binder the out parameter for what is read from the parcel. This will not be null on
- * success.
+ * \param binder the out parameter for what is read from the parcel. This may be null.
  *
  * \return STATUS_OK on successful write.
  */
 binder_status_t AParcel_readStrongBinder(const AParcel* parcel, AIBinder** binder)
-        __INTRODUCED_IN(29);
-
-/**
- * Reads an AIBinder from the next location in a non-null parcel. This may read a null. One strong
- * ref-count of ownership is passed to the caller of this function.
- *
- * \param parcel the parcel to read from.
- * \param binder the out parameter for what is read from the parcel. This may be null even on
- * success.
- *
- * \return STATUS_OK on successful write.
- */
-binder_status_t AParcel_readNullableStrongBinder(const AParcel* parcel, AIBinder** binder)
         __INTRODUCED_IN(29);
 
 /**
@@ -328,12 +429,14 @@ binder_status_t AParcel_readNullableStrongBinder(const AParcel* parcel, AIBinder
  *
  * This corresponds to the SDK's android.os.ParcelFileDescriptor.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
- * \param fd the value to write to the parcel.
+ * \param fd the value to write to the parcel (-1 to represent a null ParcelFileDescriptor).
  *
  * \return STATUS_OK on successful write.
  */
-binder_status_t AParcel_writeParcelFileDescriptor(AParcel* parcel, int fd);
+binder_status_t AParcel_writeParcelFileDescriptor(AParcel* parcel, int fd) __INTRODUCED_IN(29);
 
 /**
  * Reads an int from the next location in a non-null parcel.
@@ -342,12 +445,16 @@ binder_status_t AParcel_writeParcelFileDescriptor(AParcel* parcel, int fd);
  *
  * This corresponds to the SDK's android.os.ParcelFileDescriptor.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to read from.
- * \param binder the out parameter for what is read from the parcel.
+ * \param fd the out parameter for what is read from the parcel (or -1 to represent a null
+ * ParcelFileDescriptor)
  *
  * \return STATUS_OK on successful write.
  */
-binder_status_t AParcel_readParcelFileDescriptor(const AParcel* parcel, int* fd);
+binder_status_t AParcel_readParcelFileDescriptor(const AParcel* parcel, int* fd)
+        __INTRODUCED_IN(29);
 
 /**
  * Writes an AStatus object to the next location in a non-null parcel.
@@ -357,6 +464,8 @@ binder_status_t AParcel_readParcelFileDescriptor(const AParcel* parcel, int* fd)
  * status will be returned from this method and nothing will be written to the parcel. If either
  * this happens or if writing the status object itself fails, the return value from this function
  * should be propagated to the client, and AParcel_readStatusHeader shouldn't be called.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to write to.
  * \param status the value to write to the parcel.
@@ -370,6 +479,8 @@ binder_status_t AParcel_writeStatusHeader(AParcel* parcel, const AStatus* status
  * Reads an AStatus from the next location in a non-null parcel. Ownership is passed to the caller
  * of this function.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to read from.
  * \param status the out parameter for what is read from the parcel.
  *
@@ -381,13 +492,17 @@ binder_status_t AParcel_readStatusHeader(const AParcel* parcel, AStatus** status
 /**
  * Writes utf-8 string value to the next location in a non-null parcel.
  *
+ * If length is -1, and string is nullptr, this will write a 'null' string to the parcel.
+ *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
  * \param string the null-terminated string to write to the parcel, at least of size 'length'.
  * \param length the length of the string to be written.
  *
  * \return STATUS_OK on successful write.
  */
-binder_status_t AParcel_writeString(AParcel* parcel, const char* string, size_t length)
+binder_status_t AParcel_writeString(AParcel* parcel, const char* string, int32_t length)
         __INTRODUCED_IN(29);
 
 /**
@@ -395,7 +510,10 @@ binder_status_t AParcel_writeString(AParcel* parcel, const char* string, size_t 
  *
  * Data is passed to the string allocator once the string size is known. This size includes the
  * space for the null-terminator of this string. This allocator returns a buffer which is used as
- * the output buffer from this read.
+ * the output buffer from this read. If there is a 'null' string on the binder buffer, the allocator
+ * will be called with length -1.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to read from.
  * \param stringData some external representation of a string.
@@ -411,7 +529,10 @@ binder_status_t AParcel_readString(const AParcel* parcel, void* stringData,
  *
  * length is the length of the array. AParcel_stringArrayElementGetter will be called for all
  * indices in range [0, length) with the arrayData provided here. The string length and buffer
- * returned from this function will be used to fill out the data from the parcel.
+ * returned from this function will be used to fill out the data from the parcel. If length is -1,
+ * this will write a 'null' string array to the binder buffer.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to write to.
  * \param arrayData some external representation of an array.
@@ -421,7 +542,7 @@ binder_status_t AParcel_readString(const AParcel* parcel, void* stringData,
  *
  * \return STATUS_OK on successful write.
  */
-binder_status_t AParcel_writeStringArray(AParcel* parcel, const void* arrayData, size_t length,
+binder_status_t AParcel_writeStringArray(AParcel* parcel, const void* arrayData, int32_t length,
                                          AParcel_stringArrayElementGetter getter)
         __INTRODUCED_IN(29);
 
@@ -432,7 +553,10 @@ binder_status_t AParcel_writeStringArray(AParcel* parcel, const void* arrayData,
  * length is the length of the array to be read from the parcel. Then, for each index i in [0,
  * length), AParcel_stringArrayElementAllocator will be called with the length of the string to be
  * read from the parcel. The resultant buffer from each of these calls will be filled according to
- * the contents of the string that is read.
+ * the contents of the string that is read. If the string array being read is 'null', this will
+ * instead just pass -1 to AParcel_stringArrayAllocator.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to read from.
  * \param arrayData some external representation of an array.
@@ -448,9 +572,49 @@ binder_status_t AParcel_readStringArray(const AParcel* parcel, void* arrayData,
                                         AParcel_stringArrayElementAllocator elementAllocator)
         __INTRODUCED_IN(29);
 
+/**
+ * Writes an array of parcelables (user-defined types) to the next location in a non-null parcel.
+ *
+ * Available since API level 29.
+ *
+ * \param parcel the parcel to write to.
+ * \param arrayData an array of size 'length' (or null if length is -1, may be null if length is 0).
+ * \param length the length of arrayData or -1 if this represents a null array.
+ * \param elementWriter function to be called for every array index to write the user-defined type
+ * at that location.
+ *
+ * \return STATUS_OK on successful write.
+ */
+binder_status_t AParcel_writeParcelableArray(AParcel* parcel, const void* arrayData, int32_t length,
+                                             AParcel_writeParcelableElement elementWriter)
+        __INTRODUCED_IN(29);
+
+/**
+ * Reads an array of parcelables (user-defined types) from the next location in a non-null parcel.
+ *
+ * First, allocator will be called with the length of the array. If the allocation succeeds and the
+ * length is greater than zero, elementReader will be called for every index to read the
+ * corresponding parcelable.
+ *
+ * Available since API level 29.
+ *
+ * \param parcel the parcel to read from.
+ * \param arrayData some external representation of an array.
+ * \param allocator the callback that will be called to allocate the array.
+ * \param elementReader the callback that will be called to fill out individual elements.
+ *
+ * \return STATUS_OK on successful read.
+ */
+binder_status_t AParcel_readParcelableArray(const AParcel* parcel, void* arrayData,
+                                            AParcel_parcelableArrayAllocator allocator,
+                                            AParcel_readParcelableElement elementReader)
+        __INTRODUCED_IN(29);
+
 // @START-PRIMITIVE-READ-WRITE
 /**
  * Writes int32_t value to the next location in a non-null parcel.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to write to.
  * \param value the value to write to the parcel.
@@ -462,6 +626,8 @@ binder_status_t AParcel_writeInt32(AParcel* parcel, int32_t value) __INTRODUCED_
 /**
  * Writes uint32_t value to the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
  * \param value the value to write to the parcel.
  *
@@ -471,6 +637,8 @@ binder_status_t AParcel_writeUint32(AParcel* parcel, uint32_t value) __INTRODUCE
 
 /**
  * Writes int64_t value to the next location in a non-null parcel.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to write to.
  * \param value the value to write to the parcel.
@@ -482,6 +650,8 @@ binder_status_t AParcel_writeInt64(AParcel* parcel, int64_t value) __INTRODUCED_
 /**
  * Writes uint64_t value to the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
  * \param value the value to write to the parcel.
  *
@@ -491,6 +661,8 @@ binder_status_t AParcel_writeUint64(AParcel* parcel, uint64_t value) __INTRODUCE
 
 /**
  * Writes float value to the next location in a non-null parcel.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to write to.
  * \param value the value to write to the parcel.
@@ -502,6 +674,8 @@ binder_status_t AParcel_writeFloat(AParcel* parcel, float value) __INTRODUCED_IN
 /**
  * Writes double value to the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
  * \param value the value to write to the parcel.
  *
@@ -511,6 +685,8 @@ binder_status_t AParcel_writeDouble(AParcel* parcel, double value) __INTRODUCED_
 
 /**
  * Writes bool value to the next location in a non-null parcel.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to write to.
  * \param value the value to write to the parcel.
@@ -522,6 +698,8 @@ binder_status_t AParcel_writeBool(AParcel* parcel, bool value) __INTRODUCED_IN(2
 /**
  * Writes char16_t value to the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
  * \param value the value to write to the parcel.
  *
@@ -531,6 +709,8 @@ binder_status_t AParcel_writeChar(AParcel* parcel, char16_t value) __INTRODUCED_
 
 /**
  * Writes int8_t value to the next location in a non-null parcel.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to write to.
  * \param value the value to write to the parcel.
@@ -542,6 +722,8 @@ binder_status_t AParcel_writeByte(AParcel* parcel, int8_t value) __INTRODUCED_IN
 /**
  * Reads into int32_t value from the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to read from.
  * \param value the value to read from the parcel.
  *
@@ -551,6 +733,8 @@ binder_status_t AParcel_readInt32(const AParcel* parcel, int32_t* value) __INTRO
 
 /**
  * Reads into uint32_t value from the next location in a non-null parcel.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to read from.
  * \param value the value to read from the parcel.
@@ -562,6 +746,8 @@ binder_status_t AParcel_readUint32(const AParcel* parcel, uint32_t* value) __INT
 /**
  * Reads into int64_t value from the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to read from.
  * \param value the value to read from the parcel.
  *
@@ -571,6 +757,8 @@ binder_status_t AParcel_readInt64(const AParcel* parcel, int64_t* value) __INTRO
 
 /**
  * Reads into uint64_t value from the next location in a non-null parcel.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to read from.
  * \param value the value to read from the parcel.
@@ -582,6 +770,8 @@ binder_status_t AParcel_readUint64(const AParcel* parcel, uint64_t* value) __INT
 /**
  * Reads into float value from the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to read from.
  * \param value the value to read from the parcel.
  *
@@ -591,6 +781,8 @@ binder_status_t AParcel_readFloat(const AParcel* parcel, float* value) __INTRODU
 
 /**
  * Reads into double value from the next location in a non-null parcel.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to read from.
  * \param value the value to read from the parcel.
@@ -602,6 +794,8 @@ binder_status_t AParcel_readDouble(const AParcel* parcel, double* value) __INTRO
 /**
  * Reads into bool value from the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to read from.
  * \param value the value to read from the parcel.
  *
@@ -611,6 +805,8 @@ binder_status_t AParcel_readBool(const AParcel* parcel, bool* value) __INTRODUCE
 
 /**
  * Reads into char16_t value from the next location in a non-null parcel.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to read from.
  * \param value the value to read from the parcel.
@@ -622,6 +818,8 @@ binder_status_t AParcel_readChar(const AParcel* parcel, char16_t* value) __INTRO
 /**
  * Reads into int8_t value from the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to read from.
  * \param value the value to read from the parcel.
  *
@@ -632,73 +830,85 @@ binder_status_t AParcel_readByte(const AParcel* parcel, int8_t* value) __INTRODU
 /**
  * Writes an array of int32_t to the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
- * \param arrayData an array of size 'length'.
- * \param length the length of arrayData.
+ * \param arrayData an array of size 'length' (or null if length is -1, may be null if length is 0).
+ * \param length the length of arrayData or -1 if this represents a null array.
  *
  * \return STATUS_OK on successful write.
  */
-binder_status_t AParcel_writeInt32Array(AParcel* parcel, const int32_t* arrayData, size_t length)
+binder_status_t AParcel_writeInt32Array(AParcel* parcel, const int32_t* arrayData, int32_t length)
         __INTRODUCED_IN(29);
 
 /**
  * Writes an array of uint32_t to the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
- * \param arrayData an array of size 'length'.
- * \param length the length of arrayData.
+ * \param arrayData an array of size 'length' (or null if length is -1, may be null if length is 0).
+ * \param length the length of arrayData or -1 if this represents a null array.
  *
  * \return STATUS_OK on successful write.
  */
-binder_status_t AParcel_writeUint32Array(AParcel* parcel, const uint32_t* arrayData, size_t length)
+binder_status_t AParcel_writeUint32Array(AParcel* parcel, const uint32_t* arrayData, int32_t length)
         __INTRODUCED_IN(29);
 
 /**
  * Writes an array of int64_t to the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
- * \param arrayData an array of size 'length'.
- * \param length the length of arrayData.
+ * \param arrayData an array of size 'length' (or null if length is -1, may be null if length is 0).
+ * \param length the length of arrayData or -1 if this represents a null array.
  *
  * \return STATUS_OK on successful write.
  */
-binder_status_t AParcel_writeInt64Array(AParcel* parcel, const int64_t* arrayData, size_t length)
+binder_status_t AParcel_writeInt64Array(AParcel* parcel, const int64_t* arrayData, int32_t length)
         __INTRODUCED_IN(29);
 
 /**
  * Writes an array of uint64_t to the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
- * \param arrayData an array of size 'length'.
- * \param length the length of arrayData.
+ * \param arrayData an array of size 'length' (or null if length is -1, may be null if length is 0).
+ * \param length the length of arrayData or -1 if this represents a null array.
  *
  * \return STATUS_OK on successful write.
  */
-binder_status_t AParcel_writeUint64Array(AParcel* parcel, const uint64_t* arrayData, size_t length)
+binder_status_t AParcel_writeUint64Array(AParcel* parcel, const uint64_t* arrayData, int32_t length)
         __INTRODUCED_IN(29);
 
 /**
  * Writes an array of float to the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
- * \param arrayData an array of size 'length'.
- * \param length the length of arrayData.
+ * \param arrayData an array of size 'length' (or null if length is -1, may be null if length is 0).
+ * \param length the length of arrayData or -1 if this represents a null array.
  *
  * \return STATUS_OK on successful write.
  */
-binder_status_t AParcel_writeFloatArray(AParcel* parcel, const float* arrayData, size_t length)
+binder_status_t AParcel_writeFloatArray(AParcel* parcel, const float* arrayData, int32_t length)
         __INTRODUCED_IN(29);
 
 /**
  * Writes an array of double to the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
- * \param arrayData an array of size 'length'.
- * \param length the length of arrayData.
+ * \param arrayData an array of size 'length' (or null if length is -1, may be null if length is 0).
+ * \param length the length of arrayData or -1 if this represents a null array.
  *
  * \return STATUS_OK on successful write.
  */
-binder_status_t AParcel_writeDoubleArray(AParcel* parcel, const double* arrayData, size_t length)
+binder_status_t AParcel_writeDoubleArray(AParcel* parcel, const double* arrayData, int32_t length)
         __INTRODUCED_IN(29);
 
 /**
@@ -707,38 +917,44 @@ binder_status_t AParcel_writeDoubleArray(AParcel* parcel, const double* arrayDat
  * getter(arrayData, i) will be called for each i in [0, length) in order to get the underlying
  * values to write to the parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
  * \param arrayData some external representation of an array.
- * \param length the length of arrayData.
+ * \param length the length of arrayData (or -1 if this represents a null array).
  * \param getter the callback to retrieve data at specific locations in the array.
  *
  * \return STATUS_OK on successful write.
  */
-binder_status_t AParcel_writeBoolArray(AParcel* parcel, const void* arrayData, size_t length,
+binder_status_t AParcel_writeBoolArray(AParcel* parcel, const void* arrayData, int32_t length,
                                        AParcel_boolArrayGetter getter) __INTRODUCED_IN(29);
 
 /**
  * Writes an array of char16_t to the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
- * \param arrayData an array of size 'length'.
- * \param length the length of arrayData.
+ * \param arrayData an array of size 'length' (or null if length is -1, may be null if length is 0).
+ * \param length the length of arrayData or -1 if this represents a null array.
  *
  * \return STATUS_OK on successful write.
  */
-binder_status_t AParcel_writeCharArray(AParcel* parcel, const char16_t* arrayData, size_t length)
+binder_status_t AParcel_writeCharArray(AParcel* parcel, const char16_t* arrayData, int32_t length)
         __INTRODUCED_IN(29);
 
 /**
  * Writes an array of int8_t to the next location in a non-null parcel.
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to write to.
- * \param arrayData an array of size 'length'.
- * \param length the length of arrayData.
+ * \param arrayData an array of size 'length' (or null if length is -1, may be null if length is 0).
+ * \param length the length of arrayData or -1 if this represents a null array.
  *
  * \return STATUS_OK on successful write.
  */
-binder_status_t AParcel_writeByteArray(AParcel* parcel, const int8_t* arrayData, size_t length)
+binder_status_t AParcel_writeByteArray(AParcel* parcel, const int8_t* arrayData, int32_t length)
         __INTRODUCED_IN(29);
 
 /**
@@ -747,6 +963,8 @@ binder_status_t AParcel_writeByteArray(AParcel* parcel, const int8_t* arrayData,
  * First, allocator will be called with the length of the array. If the allocation succeeds and the
  * length is greater than zero, the buffer returned by the allocator will be filled with the
  * corresponding data
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to read from.
  * \param arrayData some external representation of an array.
@@ -764,6 +982,8 @@ binder_status_t AParcel_readInt32Array(const AParcel* parcel, void* arrayData,
  * length is greater than zero, the buffer returned by the allocator will be filled with the
  * corresponding data
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to read from.
  * \param arrayData some external representation of an array.
  * \param allocator the callback that will be called to allocate the array.
@@ -779,6 +999,8 @@ binder_status_t AParcel_readUint32Array(const AParcel* parcel, void* arrayData,
  * First, allocator will be called with the length of the array. If the allocation succeeds and the
  * length is greater than zero, the buffer returned by the allocator will be filled with the
  * corresponding data
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to read from.
  * \param arrayData some external representation of an array.
@@ -796,6 +1018,8 @@ binder_status_t AParcel_readInt64Array(const AParcel* parcel, void* arrayData,
  * length is greater than zero, the buffer returned by the allocator will be filled with the
  * corresponding data
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to read from.
  * \param arrayData some external representation of an array.
  * \param allocator the callback that will be called to allocate the array.
@@ -811,6 +1035,8 @@ binder_status_t AParcel_readUint64Array(const AParcel* parcel, void* arrayData,
  * First, allocator will be called with the length of the array. If the allocation succeeds and the
  * length is greater than zero, the buffer returned by the allocator will be filled with the
  * corresponding data
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to read from.
  * \param arrayData some external representation of an array.
@@ -828,6 +1054,8 @@ binder_status_t AParcel_readFloatArray(const AParcel* parcel, void* arrayData,
  * length is greater than zero, the buffer returned by the allocator will be filled with the
  * corresponding data
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to read from.
  * \param arrayData some external representation of an array.
  * \param allocator the callback that will be called to allocate the array.
@@ -842,6 +1070,8 @@ binder_status_t AParcel_readDoubleArray(const AParcel* parcel, void* arrayData,
  *
  * First, allocator will be called with the length of the array. Then, for every i in [0, length),
  * setter(arrayData, i, x) will be called where x is the value at the associated index.
+ *
+ * Available since API level 29.
  *
  * \param parcel the parcel to read from.
  * \param arrayData some external representation of an array.
@@ -862,6 +1092,8 @@ binder_status_t AParcel_readBoolArray(const AParcel* parcel, void* arrayData,
  * length is greater than zero, the buffer returned by the allocator will be filled with the
  * corresponding data
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to read from.
  * \param arrayData some external representation of an array.
  * \param allocator the callback that will be called to allocate the array.
@@ -878,6 +1110,8 @@ binder_status_t AParcel_readCharArray(const AParcel* parcel, void* arrayData,
  * length is greater than zero, the buffer returned by the allocator will be filled with the
  * corresponding data
  *
+ * Available since API level 29.
+ *
  * \param parcel the parcel to read from.
  * \param arrayData some external representation of an array.
  * \param allocator the callback that will be called to allocate the array.
@@ -889,7 +1123,90 @@ binder_status_t AParcel_readByteArray(const AParcel* parcel, void* arrayData,
 
 // @END-PRIMITIVE-READ-WRITE
 
-#endif  //__ANDROID_API__ >= __ANDROID_API_Q__
+/**
+ * Reset the parcel to the initial status.
+ *
+ * Available since API level 31.
+ *
+ * \param parcel The parcel of which to be reset.
+ *
+ * \return STATUS_OK on success.
+ */
+binder_status_t AParcel_reset(AParcel* parcel) __INTRODUCED_IN(31);
+
+/**
+ * Gets the size of the parcel.
+ *
+ * Available since API level 31.
+ *
+ * \param parcel The parcel of which to get the size.
+ *
+ * \return The size of the parcel.
+ */
+int32_t AParcel_getDataSize(const AParcel* parcel) __INTRODUCED_IN(31);
+
+/**
+ * Copy the data of a parcel to other parcel.
+ *
+ * Available since API level 31.
+ *
+ * \param from The source
+ * \param to The detination
+ * \param start The position where the copied data starts.
+ * \param size The amount of data which will be copied.
+ *
+ * \return STATUS_OK on success.
+ */
+binder_status_t AParcel_appendFrom(const AParcel* from, AParcel* to, int32_t start, int32_t size)
+        __INTRODUCED_IN(31);
+
+/**
+ * Creates a parcel.
+ *
+ * Available since API level 31.
+ *
+ * \return A parcel which is not related to any IBinder objects.
+ */
+AParcel* AParcel_create() __INTRODUCED_IN(31);
+
+/**
+ * Marshals the raw bytes of the Parcel to a buffer.
+ *
+ * Available since API level 33.
+ *
+ * The parcel must not contain any binders or file descriptors.
+ *
+ * The data you retrieve here must not be placed in any kind of persistent storage. (on local disk,
+ * across a network, etc). For that, you should use standard serialization or another kind of
+ * general serialization mechanism. The Parcel marshalled representation is highly optimized for
+ * local IPC, and as such does not attempt to maintain compatibility with data created in different
+ * versions of the platform.
+ *
+ * \param parcel The parcel of which to get the data.
+ * \param buffer The buffer to copy the raw bytes to.
+ * \param start The start position in the buffer to copy from.
+ * \param len The size of the data to copy, buffer size must be larger or equal to this.
+ *
+ * \return STATUS_OK on success, STATUS_INVALID_OPERATION if parcel contains binders or file
+ * descriptors. STATUS_BAD_VALUE if the buffer size is less than parcel size.
+ */
+binder_status_t AParcel_marshal(const AParcel* parcel, uint8_t* buffer, size_t start, size_t len)
+        __INTRODUCED_IN(33);
+
+/**
+ * Set the data in the parcel to the raw bytes from the buffer.
+ *
+ * Available since API level 33.
+ *
+ * \param parcel The parcel to set data.
+ * \param buffer The data buffer to set.
+ * \param len The size of the data to set.
+ *
+ * \return STATUS_OK on success.
+ */
+binder_status_t AParcel_unmarshal(AParcel* parcel, const uint8_t* buffer, size_t len)
+        __INTRODUCED_IN(33);
+
 __END_DECLS
 
 /** @} */

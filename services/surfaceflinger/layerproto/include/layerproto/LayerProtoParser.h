@@ -17,11 +17,14 @@
 
 #include <layerproto/LayerProtoHeader.h>
 
+#include <gui/LayerMetadata.h>
 #include <math/vec4.h>
 
 #include <memory>
 #include <unordered_map>
 #include <vector>
+
+using android::gui::LayerMetadata;
 
 namespace android {
 namespace surfaceflinger {
@@ -107,23 +110,16 @@ public:
         Transform bufferTransform;
         int32_t queuedFrames;
         bool refreshPending;
-        LayerProtoParser::Rect hwcFrame;
-        LayerProtoParser::FloatRect hwcCrop;
-        int32_t hwcTransform;
-        int32_t windowType;
-        int32_t appId;
-        int32_t hwcCompositionType;
         bool isProtected;
+        bool isTrustedOverlay;
+        float cornerRadius;
+        int backgroundBlurRadius;
+        LayerMetadata metadata;
+        LayerProtoParser::FloatRect cornerRadiusCrop;
+        float shadowRadius;
+        uid_t ownerUid;
 
         std::string to_string() const;
-    };
-
-    class LayerGlobal {
-    public:
-        int2 resolution;
-        std::string colorMode;
-        std::string colorTransform;
-        int32_t globalTransform;
     };
 
     class LayerTree {
@@ -135,7 +131,6 @@ public:
         std::vector<Layer*> topLevelLayers;
     };
 
-    static const LayerGlobal generateLayerGlobalInfo(const LayersProto& layersProto);
     static LayerTree generateLayerTree(const LayersProto& layersProto);
     static std::string layerTreeToString(const LayerTree& layerTree);
 

@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-#include <binder/Debug.h>
+#include "Debug.h"
+#include "BuildFlags.h"
+
 #include <binder/ProcessState.h>
 
 #include <utils/misc.h>
@@ -208,7 +210,7 @@ void printHexData(int32_t indent, const void *buf, size_t length,
     }
 
     for (offset = 0; ; offset += bytesPerLine, pos += bytesPerLine) {
-        long remain = length;
+        ssize_t remain = length;
 
         char* c = buffer;
         if (!oneLine && !cStyle) {
@@ -221,7 +223,11 @@ void printHexData(int32_t indent, const void *buf, size_t length,
 
         for (word = 0; word < bytesPerLine; ) {
 
-            const size_t startIndex = word+(alignment-(alignment?1:0));
+            size_t align_offset = alignment-(alignment?1:0);
+            if (remain > 0 && (size_t)remain <= align_offset) {
+                align_offset = remain - 1;
+            }
+            const size_t startIndex = word+align_offset;
 
             for (index = 0; index < alignment || (alignment == 0 && index < bytesPerLine); index++) {
 
@@ -296,6 +302,11 @@ void printHexData(int32_t indent, const void *buf, size_t length,
 }
 
 ssize_t getBinderKernelReferences(size_t count, uintptr_t* buf) {
+    if constexpr (!kEnableKernelIpc) {
+        LOG_ALWAYS_FATAL("Binder kernel driver disabled at build time");
+        return 0;
+    }
+
     sp<ProcessState> proc = ProcessState::selfOrNull();
     if (proc.get() == nullptr) {
         return 0;
@@ -304,5 +315,5 @@ ssize_t getBinderKernelReferences(size_t count, uintptr_t* buf) {
     return proc->getKernelReferences(count, buf);
 }
 
-}; // namespace android
+} // namespace android
 

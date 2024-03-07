@@ -22,12 +22,12 @@
 #include <cutils/native_handle.h>
 #include <utils/Errors.h>
 #include <utils/RefBase.h>
-#include <utils/Vector.h>
 #include <utils/Timers.h>
+#include <utils/Vector.h>
 
-#include <binder/Parcel.h>
 #include <binder/IInterface.h>
 #include <binder/IResultReceiver.h>
+#include <binder/Parcel.h>
 
 #include <sensor/Sensor.h>
 #include <sensor/ISensorEventConnection.h>
@@ -42,6 +42,7 @@ enum {
     GET_DYNAMIC_SENSOR_LIST,
     CREATE_SENSOR_DIRECT_CONNECTION,
     SET_OPERATION_PARAMETER,
+    GET_RUNTIME_SENSOR_LIST,
 };
 
 class BpSensorServer : public BpInterface<ISensorServer>
@@ -66,7 +67,11 @@ public:
         v.setCapacity(n);
         while (n) {
             n--;
-            reply.read(s);
+            if(reply.read(s) != OK) {
+                ALOGE("Failed to read reply from getSensorList");
+                v.clear();
+                break;
+            }
             v.add(s);
         }
         return v;
@@ -84,6 +89,29 @@ public:
         v.setCapacity(n);
         while (n) {
             n--;
+            if(reply.read(s) != OK) {
+                ALOGE("Failed to read reply from getDynamicSensorList");
+                v.clear();
+                break;
+            }
+            v.add(s);
+        }
+        return v;
+    }
+
+    virtual Vector<Sensor> getRuntimeSensorList(const String16& opPackageName, int deviceId)
+    {
+        Parcel data, reply;
+        data.writeInterfaceToken(ISensorServer::getInterfaceDescriptor());
+        data.writeString16(opPackageName);
+        data.writeInt32(deviceId);
+        remote()->transact(GET_RUNTIME_SENSOR_LIST, data, &reply);
+        Sensor s;
+        Vector<Sensor> v;
+        uint32_t n = reply.readUint32();
+        v.setCapacity(n);
+        while (n) {
+            n--;
             reply.read(s);
             v.add(s);
         }
@@ -91,13 +119,14 @@ public:
     }
 
     virtual sp<ISensorEventConnection> createSensorEventConnection(const String8& packageName,
-             int mode, const String16& opPackageName)
+             int mode, const String16& opPackageName, const String16& attributionTag)
     {
         Parcel data, reply;
         data.writeInterfaceToken(ISensorServer::getInterfaceDescriptor());
         data.writeString8(packageName);
         data.writeInt32(mode);
         data.writeString16(opPackageName);
+        data.writeString16(attributionTag);
         remote()->transact(CREATE_SENSOR_EVENT_CONNECTION, data, &reply);
         return interface_cast<ISensorEventConnection>(reply.readStrongBinder());
     }
@@ -110,10 +139,12 @@ public:
     }
 
     virtual sp<ISensorEventConnection> createSensorDirectConnection(const String16& opPackageName,
-            uint32_t size, int32_t type, int32_t format, const native_handle_t *resource) {
+            int deviceId, uint32_t size, int32_t type, int32_t format,
+            const native_handle_t *resource) {
         Parcel data, reply;
         data.writeInterfaceToken(ISensorServer::getInterfaceDescriptor());
         data.writeString16(opPackageName);
+        data.writeInt32(deviceId);
         data.writeUint32(size);
         data.writeInt32(type);
         data.writeInt32(format);
@@ -170,8 +201,9 @@ status_t BnSensorServer::onTransact(
             String8 packageName = data.readString8();
             int32_t mode = data.readInt32();
             const String16& opPackageName = data.readString16();
+            const String16& attributionTag = data.readString16();
             sp<ISensorEventConnection> connection(createSensorEventConnection(packageName, mode,
-                    opPackageName));
+                    opPackageName, attributionTag));
             reply->writeStrongBinder(IInterface::asBinder(connection));
             return NO_ERROR;
         }
@@ -192,16 +224,34 @@ status_t BnSensorServer::onTransact(
             }
             return NO_ERROR;
         }
+        case GET_RUNTIME_SENSOR_LIST: {
+            CHECK_INTERFACE(ISensorServer, data, reply);
+            const String16& opPackageName = data.readString16();
+            const int deviceId = data.readInt32();
+            Vector<Sensor> v(getRuntimeSensorList(opPackageName, deviceId));
+            size_t n = v.size();
+            reply->writeUint32(static_cast<uint32_t>(n));
+            for (size_t i = 0; i < n; i++) {
+                reply->write(v[i]);
+            }
+            return NO_ERROR;
+        }
         case CREATE_SENSOR_DIRECT_CONNECTION: {
             CHECK_INTERFACE(ISensorServer, data, reply);
             const String16& opPackageName = data.readString16();
+            const int deviceId = data.readInt32();
             uint32_t size = data.readUint32();
             int32_t type = data.readInt32();
             int32_t format = data.readInt32();
             native_handle_t *resource = data.readNativeHandle();
-            sp<ISensorEventConnection> ch =
-                    createSensorDirectConnection(opPackageName, size, type, format, resource);
-            native_handle_close(resource);
+            // Avoid a crash in native_handle_close if resource is nullptr
+            if (resource == nullptr) {
+                return BAD_VALUE;
+            }
+            native_handle_set_fdsan_tag(resource);
+            sp<ISensorEventConnection> ch = createSensorDirectConnection(
+                    opPackageName, deviceId, size, type, format, resource);
+            native_handle_close_with_tag(resource);
             native_handle_delete(resource);
             reply->writeStrongBinder(IInterface::asBinder(ch));
             return NO_ERROR;
@@ -212,14 +262,25 @@ status_t BnSensorServer::onTransact(
             int32_t type;
             Vector<float> floats;
             Vector<int32_t> ints;
+            uint32_t count;
 
             handle = data.readInt32();
             type = data.readInt32();
-            floats.resize(data.readUint32());
+
+            count = data.readUint32();
+            if (count > (data.dataAvail() / sizeof(float))) {
+              return BAD_VALUE;
+            }
+            floats.resize(count);
             for (auto &i : floats) {
                 i = data.readFloat();
             }
-            ints.resize(data.readUint32());
+
+            count = data.readUint32();
+            if (count > (data.dataAvail() / sizeof(int32_t))) {
+              return BAD_VALUE;
+            }
+            ints.resize(count);
             for (auto &i : ints) {
                 i = data.readInt32();
             }

@@ -14,24 +14,32 @@
  * limitations under the License.
  */
 
-//
-#ifndef ANDROID_ISERVICE_MANAGER_H
-#define ANDROID_ISERVICE_MANAGER_H
-
+#pragma once
 #include <binder/IInterface.h>
 #include <utils/Vector.h>
 #include <utils/String16.h>
+#include <optional>
 
 namespace android {
 
 // ----------------------------------------------------------------------
 
+/**
+ * Service manager for C++ services.
+ *
+ * IInterface is only for legacy ABI compatibility
+ */
 class IServiceManager : public IInterface
 {
 public:
-    DECLARE_META_INTERFACE(ServiceManager)
+    // for ABI compatibility
+    virtual const String16& getInterfaceDescriptor() const;
+
+    IServiceManager();
+    virtual ~IServiceManager();
+
     /**
-     * Must match values in IServiceManager.java
+     * Must match values in IServiceManager.aidl
      */
     /* Allows services to dump sections according to priorities. */
     static const int DUMP_FLAG_PRIORITY_CRITICAL = 1 << 0;
@@ -48,10 +56,19 @@ public:
     static const int DUMP_FLAG_PROTO = 1 << 4;
 
     /**
-     * Retrieve an existing service, blocking for a few seconds
-     * if it doesn't yet exist.
+     * Retrieve an existing service, blocking for a few seconds if it doesn't yet exist. This
+     * does polling. A more efficient way to make sure you unblock as soon as the service is
+     * available is to use waitForService or to use service notifications.
+     *
+     * Warning: when using this API, typically, you should call it in a loop. It's dangerous to
+     * assume that nullptr could mean that the service is not available. The service could just
+     * be starting. Generally, whether a service exists, this information should be declared
+     * externally (for instance, an Android feature might imply the existence of a service,
+     * a system property, or in the case of services in the VINTF manifest, it can be checked
+     * with isDeclared).
      */
-    virtual sp<IBinder>         getService( const String16& name) const = 0;
+    [[deprecated("this polls for 5s, prefer waitForService or checkService")]]
+    virtual sp<IBinder> getService(const String16& name) const = 0;
 
     /**
      * Retrieve an existing service, non-blocking.
@@ -72,22 +89,119 @@ public:
     // NOLINTNEXTLINE(google-default-arguments)
     virtual Vector<String16> listServices(int dumpsysFlags = DUMP_FLAG_PRIORITY_ALL) = 0;
 
-    enum {
-        GET_SERVICE_TRANSACTION = IBinder::FIRST_CALL_TRANSACTION,
-        CHECK_SERVICE_TRANSACTION,
-        ADD_SERVICE_TRANSACTION,
-        LIST_SERVICES_TRANSACTION,
+    /**
+     * Efficiently wait for a service.
+     *
+     * Returns nullptr only for permission problem or fatal error.
+     */
+    virtual sp<IBinder> waitForService(const String16& name) = 0;
+
+    /**
+     * Check if a service is declared (e.g. VINTF manifest).
+     *
+     * If this returns true, waitForService should always be able to return the
+     * service.
+     */
+    virtual bool isDeclared(const String16& name) = 0;
+
+    /**
+     * Get all instances of a service as declared in the VINTF manifest
+     */
+    virtual Vector<String16> getDeclaredInstances(const String16& interface) = 0;
+
+    /**
+     * If this instance is updatable via an APEX, returns the APEX with which
+     * this can be updated.
+     */
+    virtual std::optional<String16> updatableViaApex(const String16& name) = 0;
+
+    /**
+     * Returns all instances which are updatable via the APEX. Instance names are fully qualified
+     * like `pack.age.IFoo/default`.
+     */
+    virtual Vector<String16> getUpdatableNames(const String16& apexName) = 0;
+
+    /**
+     * If this instance has declared remote connection information, returns
+     * the ConnectionInfo.
+     */
+    struct ConnectionInfo {
+        std::string ipAddress;
+        unsigned int port;
     };
+    virtual std::optional<ConnectionInfo> getConnectionInfo(const String16& name) = 0;
+
+    struct LocalRegistrationCallback : public virtual RefBase {
+        virtual void onServiceRegistration(const String16& instance, const sp<IBinder>& binder) = 0;
+        virtual ~LocalRegistrationCallback() {}
+    };
+
+    virtual status_t registerForNotifications(const String16& name,
+                                              const sp<LocalRegistrationCallback>& callback) = 0;
+
+    virtual status_t unregisterForNotifications(const String16& name,
+                                                const sp<LocalRegistrationCallback>& callback) = 0;
+
+    struct ServiceDebugInfo {
+        std::string name;
+        int pid;
+    };
+    virtual std::vector<ServiceDebugInfo> getServiceDebugInfo() = 0;
 };
 
 sp<IServiceManager> defaultServiceManager();
+
+/**
+ * Directly set the default service manager. Only used for testing.
+ * Note that the caller is responsible for caling this method
+ * *before* any call to defaultServiceManager(); if the latter is
+ * called first, setDefaultServiceManager() will abort.
+ */
+void setDefaultServiceManager(const sp<IServiceManager>& sm);
+
+template<typename INTERFACE>
+sp<INTERFACE> waitForService(const String16& name) {
+    const sp<IServiceManager> sm = defaultServiceManager();
+    return interface_cast<INTERFACE>(sm->waitForService(name));
+}
+
+template<typename INTERFACE>
+sp<INTERFACE> waitForDeclaredService(const String16& name) {
+    const sp<IServiceManager> sm = defaultServiceManager();
+    if (!sm->isDeclared(name)) return nullptr;
+    return interface_cast<INTERFACE>(sm->waitForService(name));
+}
+
+template <typename INTERFACE>
+sp<INTERFACE> checkDeclaredService(const String16& name) {
+    const sp<IServiceManager> sm = defaultServiceManager();
+    if (!sm->isDeclared(name)) return nullptr;
+    return interface_cast<INTERFACE>(sm->checkService(name));
+}
+
+template<typename INTERFACE>
+sp<INTERFACE> waitForVintfService(
+        const String16& instance = String16("default")) {
+    return waitForDeclaredService<INTERFACE>(
+        INTERFACE::descriptor + String16("/") + instance);
+}
+
+template<typename INTERFACE>
+sp<INTERFACE> checkVintfService(
+        const String16& instance = String16("default")) {
+    return checkDeclaredService<INTERFACE>(
+        INTERFACE::descriptor + String16("/") + instance);
+}
 
 template<typename INTERFACE>
 status_t getService(const String16& name, sp<INTERFACE>* outService)
 {
     const sp<IServiceManager> sm = defaultServiceManager();
     if (sm != nullptr) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         *outService = interface_cast<INTERFACE>(sm->getService(name));
+#pragma clang diagnostic pop // getService deprecation
         if ((*outService) != nullptr) return NO_ERROR;
     }
     return NAME_NOT_FOUND;
@@ -96,9 +210,29 @@ status_t getService(const String16& name, sp<INTERFACE>* outService)
 bool checkCallingPermission(const String16& permission);
 bool checkCallingPermission(const String16& permission,
                             int32_t* outPid, int32_t* outUid);
-bool checkPermission(const String16& permission, pid_t pid, uid_t uid);
+bool checkPermission(const String16& permission, pid_t pid, uid_t uid,
+                     bool logPermissionFailure = true);
 
-}; // namespace android
+#ifndef __ANDROID__
+// Create an IServiceManager that delegates the service manager on the device via adb.
+// This is can be set as the default service manager at program start, so that
+// defaultServiceManager() returns it:
+//    int main() {
+//        setDefaultServiceManager(createRpcDelegateServiceManager());
+//        auto sm = defaultServiceManager();
+//        // ...
+//    }
+// Resources are cleaned up when the object is destroyed.
+//
+// For each returned binder object, at most |maxOutgoingConnections| outgoing connections are
+// instantiated, depending on how many the service on the device is configured with.
+// Hence, only |maxOutgoingConnections| calls can be made simultaneously.
+// See also RpcSession::setMaxOutgoingConnections.
+struct RpcDelegateServiceManagerOptions {
+    std::optional<size_t> maxOutgoingConnections;
+};
+sp<IServiceManager> createRpcDelegateServiceManager(
+        const RpcDelegateServiceManagerOptions& options);
+#endif
 
-#endif // ANDROID_ISERVICE_MANAGER_H
-
+} // namespace android

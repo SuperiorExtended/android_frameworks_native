@@ -92,14 +92,25 @@ SensorManager& SensorManager::getInstanceForPackage(const String16& packageName)
     return *sensorManager;
 }
 
+void SensorManager::removeInstanceForPackage(const String16& packageName) {
+    Mutex::Autolock _l(sLock);
+    auto iterator = sPackageInstances.find(packageName);
+    if (iterator != sPackageInstances.end()) {
+        SensorManager* sensorManager = iterator->second;
+        delete sensorManager;
+        sPackageInstances.erase(iterator);
+    }
+}
+
 SensorManager::SensorManager(const String16& opPackageName)
     : mSensorList(nullptr), mOpPackageName(opPackageName), mDirectConnectionHandle(1) {
-    // okay we're not locked here, but it's not needed during construction
+    Mutex::Autolock _l(mLock);
     assertStateLocked();
 }
 
 SensorManager::~SensorManager() {
     free(mSensorList);
+    free(mDynamicSensorList);
 }
 
 status_t SensorManager::waitForSensorService(sp<ISensorServer> *server) {
@@ -130,6 +141,9 @@ void SensorManager::sensorManagerDied() {
     free(mSensorList);
     mSensorList = nullptr;
     mSensors.clear();
+    free(mDynamicSensorList);
+    mDynamicSensorList = nullptr;
+    mDynamicSensors.clear();
 }
 
 status_t SensorManager::assertStateLocked() {
@@ -150,7 +164,7 @@ status_t SensorManager::assertStateLocked() {
         class DeathObserver : public IBinder::DeathRecipient {
             SensorManager& mSensorManager;
             virtual void binderDied(const wp<IBinder>& who) {
-                ALOGW("sensorservice died [%p]", who.unsafe_get());
+                ALOGW("sensorservice died [%p]", static_cast<void*>(who.unsafe_get()));
                 mSensorManager.sensorManagerDied();
             }
         public:
@@ -162,6 +176,8 @@ status_t SensorManager::assertStateLocked() {
 
         mSensors = mSensorServer->getSensorList(mOpPackageName);
         size_t count = mSensors.size();
+        // If count is 0, mSensorList will be non-null. This is old
+        // existing behavior and callers expect this.
         mSensorList =
                 static_cast<Sensor const**>(malloc(count * sizeof(Sensor*)));
         LOG_ALWAYS_FATAL_IF(mSensorList == nullptr, "mSensorList NULL");
@@ -197,6 +213,48 @@ ssize_t SensorManager::getDynamicSensorList(Vector<Sensor> & dynamicSensors) {
     return static_cast<ssize_t>(count);
 }
 
+ssize_t SensorManager::getRuntimeSensorList(int deviceId, Vector<Sensor>& runtimeSensors) {
+    Mutex::Autolock _l(mLock);
+    status_t err = assertStateLocked();
+    if (err < 0) {
+        return static_cast<ssize_t>(err);
+    }
+
+    runtimeSensors = mSensorServer->getRuntimeSensorList(mOpPackageName, deviceId);
+    size_t count = runtimeSensors.size();
+
+    return static_cast<ssize_t>(count);
+}
+
+ssize_t SensorManager::getDynamicSensorList(Sensor const* const** list) {
+    Mutex::Autolock _l(mLock);
+    status_t err = assertStateLocked();
+    if (err < 0) {
+        return static_cast<ssize_t>(err);
+    }
+
+    free(mDynamicSensorList);
+    mDynamicSensorList = nullptr;
+    mDynamicSensors = mSensorServer->getDynamicSensorList(mOpPackageName);
+    size_t dynamicCount = mDynamicSensors.size();
+    if (dynamicCount > 0) {
+        mDynamicSensorList = static_cast<Sensor const**>(
+                malloc(dynamicCount * sizeof(Sensor*)));
+        if (mDynamicSensorList == nullptr) {
+          ALOGE("Failed to allocate dynamic sensor list for %zu sensors.",
+                dynamicCount);
+          return static_cast<ssize_t>(NO_MEMORY);
+        }
+
+        for (size_t i = 0; i < dynamicCount; i++) {
+            mDynamicSensorList[i] = mDynamicSensors.array() + i;
+        }
+    }
+
+    *list = mDynamicSensorList;
+    return static_cast<ssize_t>(mDynamicSensors.size());
+}
+
 Sensor const* SensorManager::getDefaultSensor(int type)
 {
     Mutex::Autolock _l(mLock);
@@ -209,7 +267,7 @@ Sensor const* SensorManager::getDefaultSensor(int type)
             type == SENSOR_TYPE_TILT_DETECTOR || type == SENSOR_TYPE_WAKE_GESTURE ||
             type == SENSOR_TYPE_GLANCE_GESTURE || type == SENSOR_TYPE_PICK_UP_GESTURE ||
             type == SENSOR_TYPE_WRIST_TILT_GESTURE ||
-            type == SENSOR_TYPE_LOW_LATENCY_OFFBODY_DETECT) {
+            type == SENSOR_TYPE_LOW_LATENCY_OFFBODY_DETECT || type == SENSOR_TYPE_HINGE_ANGLE) {
             wakeUpSensor = true;
         }
         // For now we just return the first sensor of that type we find.
@@ -225,13 +283,14 @@ Sensor const* SensorManager::getDefaultSensor(int type)
     return nullptr;
 }
 
-sp<SensorEventQueue> SensorManager::createEventQueue(String8 packageName, int mode) {
+sp<SensorEventQueue> SensorManager::createEventQueue(
+    String8 packageName, int mode, String16 attributionTag) {
     sp<SensorEventQueue> queue;
 
     Mutex::Autolock _l(mLock);
     while (assertStateLocked() == NO_ERROR) {
-        sp<ISensorEventConnection> connection =
-                mSensorServer->createSensorEventConnection(packageName, mode, mOpPackageName);
+        sp<ISensorEventConnection> connection = mSensorServer->createSensorEventConnection(
+            packageName, mode, mOpPackageName, attributionTag);
         if (connection == nullptr) {
             // SensorService just died or the app doesn't have required permissions.
             ALOGE("createEventQueue: connection is NULL.");
@@ -253,6 +312,12 @@ bool SensorManager::isDataInjectionEnabled() {
 
 int SensorManager::createDirectChannel(
         size_t size, int channelType, const native_handle_t *resourceHandle) {
+    static constexpr int DEFAULT_DEVICE_ID = 0;
+    return createDirectChannel(DEFAULT_DEVICE_ID, size, channelType, resourceHandle);
+}
+
+int SensorManager::createDirectChannel(
+        int deviceId, size_t size, int channelType, const native_handle_t *resourceHandle) {
     Mutex::Autolock _l(mLock);
     if (assertStateLocked() != NO_ERROR) {
         return NO_INIT;
@@ -265,7 +330,7 @@ int SensorManager::createDirectChannel(
     }
 
     sp<ISensorEventConnection> conn =
-              mSensorServer->createSensorDirectConnection(mOpPackageName,
+              mSensorServer->createSensorDirectConnection(mOpPackageName, deviceId,
                   static_cast<uint32_t>(size),
                   static_cast<int32_t>(channelType),
                   SENSOR_DIRECT_FMT_SENSORS_EVENT, resourceHandle);

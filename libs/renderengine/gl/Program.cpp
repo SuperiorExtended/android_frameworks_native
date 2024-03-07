@@ -36,6 +36,9 @@ Program::Program(const ProgramCache::Key& /*needs*/, const char* vertex, const c
     glAttachShader(programId, fragmentId);
     glBindAttribLocation(programId, position, "position");
     glBindAttribLocation(programId, texCoords, "texCoords");
+    glBindAttribLocation(programId, cropCoords, "cropCoords");
+    glBindAttribLocation(programId, shadowColor, "shadowColor");
+    glBindAttribLocation(programId, shadowParams, "shadowParams");
     glLinkProgram(programId);
 
     GLint status;
@@ -63,15 +66,28 @@ Program::Program(const ProgramCache::Key& /*needs*/, const char* vertex, const c
         mTextureMatrixLoc = glGetUniformLocation(programId, "texture");
         mSamplerLoc = glGetUniformLocation(programId, "sampler");
         mColorLoc = glGetUniformLocation(programId, "color");
+        mDisplayColorMatrixLoc = glGetUniformLocation(programId, "displayColorMatrix");
         mDisplayMaxLuminanceLoc = glGetUniformLocation(programId, "displayMaxLuminance");
+        mMaxMasteringLuminanceLoc = glGetUniformLocation(programId, "maxMasteringLuminance");
+        mMaxContentLuminanceLoc = glGetUniformLocation(programId, "maxContentLuminance");
         mInputTransformMatrixLoc = glGetUniformLocation(programId, "inputTransformMatrix");
         mOutputTransformMatrixLoc = glGetUniformLocation(programId, "outputTransformMatrix");
+        mCornerRadiusLoc = glGetUniformLocation(programId, "cornerRadius");
+        mCropCenterLoc = glGetUniformLocation(programId, "cropCenter");
 
         // set-up the default values for our uniforms
         glUseProgram(programId);
         glUniformMatrix4fv(mProjectionMatrixLoc, 1, GL_FALSE, mat4().asArray());
         glEnableVertexAttribArray(0);
     }
+}
+
+Program::~Program() {
+    glDetachShader(mProgram, mVertexShader);
+    glDetachShader(mProgram, mFragmentShader);
+    glDeleteShader(mVertexShader);
+    glDeleteShader(mFragmentShader);
+    glDeleteProgram(mProgram);
 }
 
 bool Program::isValid() const {
@@ -122,6 +138,9 @@ void Program::setUniforms(const Description& desc) {
         const float color[4] = {desc.color.r, desc.color.g, desc.color.b, desc.color.a};
         glUniform4fv(mColorLoc, 1, color);
     }
+    if (mDisplayColorMatrixLoc >= 0) {
+        glUniformMatrix4fv(mDisplayColorMatrixLoc, 1, GL_FALSE, desc.displayColorMatrix.asArray());
+    }
     if (mInputTransformMatrixLoc >= 0) {
         mat4 inputTransformMatrix = desc.inputTransformMatrix;
         glUniformMatrix4fv(mInputTransformMatrixLoc, 1, GL_FALSE, inputTransformMatrix.asArray());
@@ -134,6 +153,18 @@ void Program::setUniforms(const Description& desc) {
     }
     if (mDisplayMaxLuminanceLoc >= 0) {
         glUniform1f(mDisplayMaxLuminanceLoc, desc.displayMaxLuminance);
+    }
+    if (mMaxMasteringLuminanceLoc >= 0) {
+        glUniform1f(mMaxMasteringLuminanceLoc, desc.maxMasteringLuminance);
+    }
+    if (mMaxContentLuminanceLoc >= 0) {
+        glUniform1f(mMaxContentLuminanceLoc, desc.maxContentLuminance);
+    }
+    if (mCornerRadiusLoc >= 0) {
+        glUniform1f(mCornerRadiusLoc, desc.cornerRadius);
+    }
+    if (mCropCenterLoc >= 0) {
+        glUniform2f(mCropCenterLoc, desc.cropSize.x / 2.0f, desc.cropSize.y / 2.0f);
     }
     // these uniforms are always present
     glUniformMatrix4fv(mProjectionMatrixLoc, 1, GL_FALSE, desc.projectionMatrix.asArray());

@@ -29,14 +29,14 @@
 
 #include <hardware/input.h>
 #include <input/InputDevice.h>
+#include <input/PropertyMap.h>
 #include <utils/Log.h>
-#include <utils/PropertyMap.h>
 #include <utils/String8.h>
 
 #define INDENT2 "    "
 
 struct input_property_map {
-    android::PropertyMap* propertyMap;
+    std::unique_ptr<android::PropertyMap> propertyMap;
 };
 
 struct input_property {
@@ -127,10 +127,10 @@ input_device_identifier_t* InputDriver::createDeviceIdentifier(
             input_bus_t bus, const char* uniqueId) {
     auto identifier = new ::input_device_identifier {
         .name = name,
-        .productId = productId,
-        .vendorId = vendorId,
-        .bus = bus,
         .uniqueId = uniqueId,
+        .bus = bus,
+        .vendorId = vendorId,
+        .productId = productId,
     };
     // TODO: store this identifier somewhere
     return identifier;
@@ -217,39 +217,39 @@ input_property_map_t* InputDriver::inputGetDevicePropertyMap(input_device_identi
     idi.product = id->productId;
     idi.version = id->version;
 
-    std::string configFile = getInputDeviceConfigurationFilePathByDeviceIdentifier(
-            idi, INPUT_DEVICE_CONFIGURATION_FILE_TYPE_CONFIGURATION);
+    std::string configFile =
+            getInputDeviceConfigurationFilePathByDeviceIdentifier(idi,
+                                                                  InputDeviceConfigurationFileType::
+                                                                          CONFIGURATION);
     if (configFile.empty()) {
         ALOGD("No input device configuration file found for device '%s'.",
                 idi.name.c_str());
     } else {
-        auto propMap = new input_property_map_t();
-        status_t status = PropertyMap::load(String8(configFile.c_str()), &propMap->propertyMap);
-        if (status) {
+        std::unique_ptr<input_property_map_t> propMap = std::make_unique<input_property_map_t>();
+        android::base::Result<std::unique_ptr<PropertyMap>> result =
+                PropertyMap::load(configFile.c_str());
+        if (!result.ok()) {
             ALOGE("Error loading input device configuration file for device '%s'. "
                     "Using default configuration.",
                     idi.name.c_str());
-            delete propMap;
             return nullptr;
         }
-        return propMap;
+        propMap->propertyMap = std::move(*result);
+        return propMap.release();
     }
     return nullptr;
 }
 
-input_property_t* InputDriver::inputGetDeviceProperty(input_property_map_t* map,
-        const char* key) {
-    String8 keyString(key);
+input_property_t* InputDriver::inputGetDeviceProperty(input_property_map_t* map, const char* key) {
     if (map != nullptr) {
-        if (map->propertyMap->hasProperty(keyString)) {
-            auto prop = new input_property_t();
-            if (!map->propertyMap->tryGetProperty(keyString, prop->value)) {
-                delete prop;
-                return nullptr;
-            }
-            prop->key = keyString;
-            return prop;
+        std::optional<std::string> value = map->propertyMap->getString(key);
+        if (!value.has_value()) {
+            return nullptr;
         }
+        auto prop = std::make_unique<input_property_t>();
+        prop->key = key;
+        prop->value = value->c_str();
+        return prop.release();
     }
     return nullptr;
 }
@@ -276,7 +276,6 @@ void InputDriver::inputFreeDeviceProperty(input_property_t* property) {
 
 void InputDriver::inputFreeDevicePropertyMap(input_property_map_t* map) {
     if (map != nullptr) {
-        delete map->propertyMap;
         delete map;
     }
 }

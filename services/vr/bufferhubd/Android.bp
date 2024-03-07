@@ -12,12 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+package {
+    // See: http://go/android-license-faq
+    // A large-scale-change added 'default_applicable_licenses' to import
+    // all of the 'license_kinds' from "frameworks_native_license"
+    // to get the below license kinds:
+    //   SPDX-license-identifier-Apache-2.0
+    default_applicable_licenses: ["frameworks_native_license"],
+}
+
 sharedLibraries = [
     "libbase",
-    "libbinder",
-    "libbufferhubservice",
     "libcutils",
-    "libgtest_prod",
     "libgui",
     "liblog",
     "libpdx_default_transport",
@@ -29,13 +35,9 @@ sharedLibraries = [
 cc_library_static {
     name: "libbufferhubd",
     srcs: [
-        "buffer_channel.cpp",
-        "buffer_client.cpp",
         "buffer_hub.cpp",
-        "buffer_hub_binder.cpp",
         "consumer_channel.cpp",
         "consumer_queue_channel.cpp",
-        "IBufferHub.cpp",
         "producer_channel.cpp",
         "producer_queue_channel.cpp",
     ],
@@ -45,21 +47,16 @@ cc_library_static {
         "-DATRACE_TAG=ATRACE_TAG_GRAPHICS",
     ],
     export_include_dirs: ["include"],
-    header_libs: [
-        "libdvr_headers",
-        "libnativewindow_headers",
-    ],
+    header_libs: ["libdvr_headers"],
     shared_libs: sharedLibraries,
     static_libs: [
         "libbufferhub",
     ],
-
-    // TODO(b/117568153): Temporarily opt out using libcrt.
-    no_libcrt: true,
 }
 
 cc_binary {
     srcs: ["bufferhubd.cpp"],
+    system_ext_specific: true,
     cflags: [
         "-DLOG_TAG=\"bufferhubd\"",
         "-DTRACE=0",
@@ -75,5 +72,3 @@ cc_binary {
     name: "bufferhubd",
     init_rc: ["bufferhubd.rc"],
 }
-
-subdirs = ["tests"]

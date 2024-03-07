@@ -14,40 +14,77 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_GUI_ISURFACE_COMPOSER_H
-#define ANDROID_GUI_ISURFACE_COMPOSER_H
+#pragma once
 
+#include <android/gui/CachingHint.h>
+#include <android/gui/DisplayBrightness.h>
+#include <android/gui/FrameTimelineInfo.h>
+#include <android/gui/IDisplayEventConnection.h>
+#include <android/gui/IFpsListener.h>
+#include <android/gui/IHdrLayerInfoListener.h>
+#include <android/gui/IRegionSamplingListener.h>
+#include <android/gui/IScreenCaptureListener.h>
+#include <android/gui/ITunnelModeEnabledListener.h>
+#include <android/gui/IWindowInfosListener.h>
+#include <android/gui/IWindowInfosPublisher.h>
+#include <binder/IBinder.h>
+#include <binder/IInterface.h>
+#include <gui/ITransactionCompletedListener.h>
+#include <gui/SpHash.h>
+#include <math/vec4.h>
 #include <stdint.h>
 #include <sys/types.h>
-
-#include <utils/RefBase.h>
+#include <ui/ConfigStoreTypes.h>
+#include <ui/DisplayId.h>
+#include <ui/DisplayMode.h>
+#include <ui/DisplayedFrameStats.h>
+#include <ui/FrameStats.h>
+#include <ui/GraphicBuffer.h>
+#include <ui/GraphicTypes.h>
+#include <ui/PixelFormat.h>
+#include <ui/Rotation.h>
 #include <utils/Errors.h>
+#include <utils/RefBase.h>
 #include <utils/Timers.h>
 #include <utils/Vector.h>
 
-#include <binder/IInterface.h>
-
-#include <ui/FrameStats.h>
-#include <ui/PixelFormat.h>
-#include <ui/GraphicBuffer.h>
-#include <ui/GraphicTypes.h>
-
+#include <optional>
+#include <unordered_set>
 #include <vector>
 
-namespace android {
-// ----------------------------------------------------------------------------
+#include <aidl/android/hardware/graphics/common/DisplayDecorationSupport.h>
 
-struct ComposerState;
-struct DisplayState;
-struct DisplayInfo;
+namespace android {
+
+struct client_cache_t;
+class ComposerState;
 struct DisplayStatInfo;
-class LayerDebugInfo;
+struct DisplayState;
+struct InputWindowCommands;
 class HdrCapabilities;
-class IDisplayEventConnection;
-class IGraphicBufferProducer;
-class ISurfaceComposerClient;
 class Rect;
-enum class FrameEvent;
+
+using gui::FrameTimelineInfo;
+using gui::IDisplayEventConnection;
+using gui::IRegionSamplingListener;
+using gui::IScreenCaptureListener;
+using gui::SpHash;
+
+namespace gui {
+
+struct DisplayCaptureArgs;
+struct LayerCaptureArgs;
+class LayerDebugInfo;
+
+} // namespace gui
+
+namespace ui {
+
+struct DisplayMode;
+struct DisplayState;
+struct DynamicDisplayInfo;
+
+} // namespace ui
 
 /*
  * This class defines the Binder IPC interface for accessing various
@@ -59,240 +96,28 @@ public:
 
     // flags for setTransactionState()
     enum {
-        eSynchronous = 0x01,
-        eAnimation   = 0x02,
+        eAnimation = 0x02,
 
-        // Indicates that this transaction will likely result in a lot of layers being composed, and
-        // thus, SurfaceFlinger should wake-up earlier to avoid missing frame deadlines. In this
-        // case SurfaceFlinger will wake up at (sf vsync offset - debug.sf.early_phase_offset_ns)
-        eEarlyWakeup = 0x04
+        // Explicit indication that this transaction and others to follow will likely result in a
+        // lot of layers being composed, and thus, SurfaceFlinger should wake-up earlier to avoid
+        // missing frame deadlines. In this case SurfaceFlinger will wake up at
+        // (sf vsync offset - debug.sf.early_phase_offset_ns). SurfaceFlinger will continue to be
+        // in the early configuration until it receives eEarlyWakeupEnd. These flags are
+        // expected to be used by WindowManager only and are guarded by
+        // android.permission.WAKEUP_SURFACE_FLINGER
+        eEarlyWakeupStart = 0x08,
+        eEarlyWakeupEnd = 0x10,
+        eOneWay = 0x20
     };
-
-    enum {
-        eDisplayIdMain = 0,
-        eDisplayIdHdmi = 1
-    };
-
-    enum Rotation {
-        eRotateNone = 0,
-        eRotate90   = 1,
-        eRotate180  = 2,
-        eRotate270  = 3
-    };
-
-    enum VsyncSource {
-        eVsyncSourceApp = 0,
-        eVsyncSourceSurfaceFlinger = 1
-    };
-
-    /* create connection with surface flinger, requires
-     * ACCESS_SURFACE_FLINGER permission
-     */
-    virtual sp<ISurfaceComposerClient> createConnection() = 0;
-
-    /** create a scoped connection with surface flinger.
-     * Surfaces produced with this connection will act
-     * as children of the passed in GBP. That is to say
-     * SurfaceFlinger will draw them relative and confined to
-     * drawing of buffers from the layer associated with parent.
-     * As this is graphically equivalent in reach to just drawing
-     * pixels into the parent buffers, it requires no special permission.
-     */
-    virtual sp<ISurfaceComposerClient> createScopedConnection(
-            const sp<IGraphicBufferProducer>& parent) = 0;
-
-    /* return an IDisplayEventConnection */
-    virtual sp<IDisplayEventConnection> createDisplayEventConnection(
-            VsyncSource vsyncSource = eVsyncSourceApp) = 0;
-
-    /* create a virtual display
-     * requires ACCESS_SURFACE_FLINGER permission.
-     */
-    virtual sp<IBinder> createDisplay(const String8& displayName,
-            bool secure) = 0;
-
-    /* destroy a virtual display
-     * requires ACCESS_SURFACE_FLINGER permission.
-     */
-    virtual void destroyDisplay(const sp<IBinder>& display) = 0;
-
-    /* get the token for the existing default displays. possible values
-     * for id are eDisplayIdMain and eDisplayIdHdmi.
-     */
-    virtual sp<IBinder> getBuiltInDisplay(int32_t id) = 0;
 
     /* open/close transactions. requires ACCESS_SURFACE_FLINGER permission */
-    virtual void setTransactionState(const Vector<ComposerState>& state,
-            const Vector<DisplayState>& displays, uint32_t flags) = 0;
-
-    /* signal that we're done booting.
-     * Requires ACCESS_SURFACE_FLINGER permission
-     */
-    virtual void bootFinished() = 0;
-
-    /* verify that an IGraphicBufferProducer was created by SurfaceFlinger.
-     */
-    virtual bool authenticateSurfaceTexture(
-            const sp<IGraphicBufferProducer>& surface) const = 0;
-
-    /* Returns the frame timestamps supported by SurfaceFlinger.
-     */
-    virtual status_t getSupportedFrameTimestamps(
-            std::vector<FrameEvent>* outSupported) const = 0;
-
-    /* set display power mode. depending on the mode, it can either trigger
-     * screen on, off or low power mode and wait for it to complete.
-     * requires ACCESS_SURFACE_FLINGER permission.
-     */
-    virtual void setPowerMode(const sp<IBinder>& display, int mode) = 0;
-
-    /* returns information for each configuration of the given display
-     * intended to be used to get information about built-in displays */
-    virtual status_t getDisplayConfigs(const sp<IBinder>& display,
-            Vector<DisplayInfo>* configs) = 0;
-
-    /* returns display statistics for a given display
-     * intended to be used by the media framework to properly schedule
-     * video frames */
-    virtual status_t getDisplayStats(const sp<IBinder>& display,
-            DisplayStatInfo* stats) = 0;
-
-    /* indicates which of the configurations returned by getDisplayInfo is
-     * currently active */
-    virtual int getActiveConfig(const sp<IBinder>& display) = 0;
-
-    /* specifies which configuration (of those returned by getDisplayInfo)
-     * should be used */
-    virtual status_t setActiveConfig(const sp<IBinder>& display, int id) = 0;
-
-    virtual status_t getDisplayColorModes(const sp<IBinder>& display,
-            Vector<ui::ColorMode>* outColorModes) = 0;
-    virtual ui::ColorMode getActiveColorMode(const sp<IBinder>& display) = 0;
-    virtual status_t setActiveColorMode(const sp<IBinder>& display,
-            ui::ColorMode colorMode) = 0;
-
-    /**
-     * Capture the specified screen. This requires READ_FRAME_BUFFER
-     * permission.  This function will fail if there is a secure window on
-     * screen.
-     *
-     * This function can capture a subregion (the source crop) of the screen.
-     * The subregion can be optionally rotated.  It will also be scaled to
-     * match the size of the output buffer.
-     *
-     * reqDataspace and reqPixelFormat specify the data space and pixel format
-     * of the buffer. The caller should pick the data space and pixel format
-     * that it can consume.
-     *
-     * At the moment, sourceCrop is ignored and is always set to the visible
-     * region (projected display viewport) of the screen.
-     *
-     * reqWidth and reqHeight specifies the size of the buffer.  When either
-     * of them is 0, they are set to the size of the logical display viewport.
-     *
-     * When useIdentityTransform is true, layer transformations are disabled.
-     *
-     * rotation specifies the rotation of the source crop (and the pixels in
-     * it) around its center.
-     */
-    virtual status_t captureScreen(const sp<IBinder>& display, sp<GraphicBuffer>* outBuffer,
-                                   const ui::Dataspace reqDataspace,
-                                   const ui::PixelFormat reqPixelFormat, Rect sourceCrop,
-                                   uint32_t reqWidth, uint32_t reqHeight, bool useIdentityTransform,
-                                   Rotation rotation = eRotateNone) = 0;
-    /**
-     * Capture the specified screen. This requires READ_FRAME_BUFFER
-     * permission.  This function will fail if there is a secure window on
-     * screen.
-     *
-     * This function can capture a subregion (the source crop) of the screen
-     * into an sRGB buffer with RGBA_8888 pixel format.
-     * The subregion can be optionally rotated.  It will also be scaled to
-     * match the size of the output buffer.
-     *
-     * At the moment, sourceCrop is ignored and is always set to the visible
-     * region (projected display viewport) of the screen.
-     *
-     * reqWidth and reqHeight specifies the size of the buffer.  When either
-     * of them is 0, they are set to the size of the logical display viewport.
-     *
-     * When useIdentityTransform is true, layer transformations are disabled.
-     *
-     * rotation specifies the rotation of the source crop (and the pixels in
-     * it) around its center.
-     */
-    virtual status_t captureScreen(const sp<IBinder>& display, sp<GraphicBuffer>* outBuffer,
-                                   Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
-                                   bool useIdentityTransform, Rotation rotation = eRotateNone) {
-        return captureScreen(display, outBuffer, ui::Dataspace::V0_SRGB, ui::PixelFormat::RGBA_8888,
-                             sourceCrop, reqWidth, reqHeight, useIdentityTransform, rotation);
-    }
-
-    /**
-     * Capture a subtree of the layer hierarchy, potentially ignoring the root node.
-     *
-     * reqDataspace and reqPixelFormat specify the data space and pixel format
-     * of the buffer. The caller should pick the data space and pixel format
-     * that it can consume.
-     */
-    virtual status_t captureLayers(const sp<IBinder>& layerHandleBinder,
-                                   sp<GraphicBuffer>* outBuffer, const ui::Dataspace reqDataspace,
-                                   const ui::PixelFormat reqPixelFormat, const Rect& sourceCrop,
-                                   float frameScale = 1.0, bool childrenOnly = false) = 0;
-
-    /**
-     * Capture a subtree of the layer hierarchy into an sRGB buffer with RGBA_8888 pixel format,
-     * potentially ignoring the root node.
-     */
-    status_t captureLayers(const sp<IBinder>& layerHandleBinder, sp<GraphicBuffer>* outBuffer,
-                           const Rect& sourceCrop, float frameScale = 1.0,
-                           bool childrenOnly = false) {
-        return captureLayers(layerHandleBinder, outBuffer, ui::Dataspace::V0_SRGB,
-                             ui::PixelFormat::RGBA_8888, sourceCrop, frameScale, childrenOnly);
-    }
-
-    /* Clears the frame statistics for animations.
-     *
-     * Requires the ACCESS_SURFACE_FLINGER permission.
-     */
-    virtual status_t clearAnimationFrameStats() = 0;
-
-    /* Gets the frame statistics for animations.
-     *
-     * Requires the ACCESS_SURFACE_FLINGER permission.
-     */
-    virtual status_t getAnimationFrameStats(FrameStats* outStats) const = 0;
-
-    /* Gets the supported HDR capabilities of the given display.
-     *
-     * Requires the ACCESS_SURFACE_FLINGER permission.
-     */
-    virtual status_t getHdrCapabilities(const sp<IBinder>& display,
-            HdrCapabilities* outCapabilities) const = 0;
-
-    virtual status_t enableVSyncInjections(bool enable) = 0;
-
-    virtual status_t injectVSync(nsecs_t when) = 0;
-
-    /* Gets the list of active layers in Z order for debugging purposes
-     *
-     * Requires the ACCESS_SURFACE_FLINGER permission.
-     */
-    virtual status_t getLayerDebugInfo(std::vector<LayerDebugInfo>* outLayers) const = 0;
-
-    virtual status_t getColorManagement(bool* outGetColorManagement) const = 0;
-
-    /* Gets the composition preference of the default data space and default pixel format,
-     * as well as the wide color gamut data space and wide color gamut pixel format.
-     * If the wide color gamut data space is V0_SRGB, then it implies that the platform
-     * has no wide color gamut support.
-     *
-     * Requires the ACCESS_SURFACE_FLINGER permission.
-     */
-    virtual status_t getCompositionPreference(ui::Dataspace* defaultDataspace,
-                                              ui::PixelFormat* defaultPixelFormat,
-                                              ui::Dataspace* wideColorGamutDataspace,
-                                              ui::PixelFormat* wideColorGamutPixelFormat) const = 0;
+    virtual status_t setTransactionState(
+            const FrameTimelineInfo& frameTimelineInfo, Vector<ComposerState>& state,
+            const Vector<DisplayState>& displays, uint32_t flags, const sp<IBinder>& applyToken,
+            InputWindowCommands inputWindowCommands, int64_t desiredPresentTime,
+            bool isAutoTimestamp, const std::vector<client_cache_t>& uncacheBuffer,
+            bool hasListenerCallbacks, const std::vector<ListenerCallbacks>& listenerCallbacks,
+            uint64_t transactionId, const std::vector<uint64_t>& mergedTransactionIds) = 0;
 };
 
 // ----------------------------------------------------------------------------
@@ -303,43 +128,82 @@ public:
         // Note: BOOT_FINISHED must remain this value, it is called from
         // Java by ActivityManagerService.
         BOOT_FINISHED = IBinder::FIRST_CALL_TRANSACTION,
-        CREATE_CONNECTION,
-        CREATE_GRAPHIC_BUFFER_ALLOC_UNUSED, // unused, fails permissions check
-        CREATE_DISPLAY_EVENT_CONNECTION,
-        CREATE_DISPLAY,
-        DESTROY_DISPLAY,
-        GET_BUILT_IN_DISPLAY,
+        CREATE_CONNECTION,               // Deprecated. Autogenerated by .aidl now.
+        GET_STATIC_DISPLAY_INFO,         // Deprecated. Autogenerated by .aidl now.
+        CREATE_DISPLAY_EVENT_CONNECTION, // Deprecated. Autogenerated by .aidl now.
+        CREATE_DISPLAY,                  // Deprecated. Autogenerated by .aidl now.
+        DESTROY_DISPLAY,                 // Deprecated. Autogenerated by .aidl now.
+        GET_PHYSICAL_DISPLAY_TOKEN,      // Deprecated. Autogenerated by .aidl now.
         SET_TRANSACTION_STATE,
-        AUTHENTICATE_SURFACE,
-        GET_SUPPORTED_FRAME_TIMESTAMPS,
-        GET_DISPLAY_CONFIGS,
-        GET_ACTIVE_CONFIG,
-        SET_ACTIVE_CONFIG,
-        CONNECT_DISPLAY_UNUSED, // unused, fails permissions check
-        CAPTURE_SCREEN,
-        CAPTURE_LAYERS,
-        CLEAR_ANIMATION_FRAME_STATS,
-        GET_ANIMATION_FRAME_STATS,
-        SET_POWER_MODE,
+        AUTHENTICATE_SURFACE,           // Deprecated. Autogenerated by .aidl now.
+        GET_SUPPORTED_FRAME_TIMESTAMPS, // Deprecated. Autogenerated by .aidl now.
+        GET_DISPLAY_MODES,              // Deprecated. Use GET_DYNAMIC_DISPLAY_INFO instead.
+        GET_ACTIVE_DISPLAY_MODE,        // Deprecated. Use GET_DYNAMIC_DISPLAY_INFO instead.
+        GET_DISPLAY_STATE,
+        CAPTURE_DISPLAY,             // Deprecated. Autogenerated by .aidl now.
+        CAPTURE_LAYERS,              // Deprecated. Autogenerated by .aidl now.
+        CLEAR_ANIMATION_FRAME_STATS, // Deprecated. Autogenerated by .aidl now.
+        GET_ANIMATION_FRAME_STATS,   // Deprecated. Autogenerated by .aidl now.
+        SET_POWER_MODE,              // Deprecated. Autogenerated by .aidl now.
         GET_DISPLAY_STATS,
-        GET_HDR_CAPABILITIES,
-        GET_DISPLAY_COLOR_MODES,
-        GET_ACTIVE_COLOR_MODE,
-        SET_ACTIVE_COLOR_MODE,
-        ENABLE_VSYNC_INJECTIONS,
-        INJECT_VSYNC,
-        GET_LAYER_DEBUG_INFO,
-        CREATE_SCOPED_CONNECTION,
-        GET_COMPOSITION_PREFERENCE,
-        GET_COLOR_MANAGEMENT,
+        GET_HDR_CAPABILITIES,       // Deprecated. Use GET_DYNAMIC_DISPLAY_INFO instead.
+        GET_DISPLAY_COLOR_MODES,    // Deprecated. Use GET_DYNAMIC_DISPLAY_INFO instead.
+        GET_ACTIVE_COLOR_MODE,      // Deprecated. Use GET_DYNAMIC_DISPLAY_INFO instead.
+        SET_ACTIVE_COLOR_MODE,      // Deprecated. Autogenerated by .aidl now.
+        ENABLE_VSYNC_INJECTIONS,    // Deprecated. Autogenerated by .aidl now.
+        INJECT_VSYNC,               // Deprecated. Autogenerated by .aidl now.
+        GET_LAYER_DEBUG_INFO,       // Deprecated. Autogenerated by .aidl now.
+        GET_COMPOSITION_PREFERENCE, // Deprecated. Autogenerated by .aidl now.
+        GET_COLOR_MANAGEMENT,       // Deprecated. Autogenerated by .aidl now.
+        GET_DISPLAYED_CONTENT_SAMPLING_ATTRIBUTES, // Deprecated. Autogenerated by .aidl now.
+        SET_DISPLAY_CONTENT_SAMPLING_ENABLED,      // Deprecated. Autogenerated by .aidl now.
+        GET_DISPLAYED_CONTENT_SAMPLE,
+        GET_PROTECTED_CONTENT_SUPPORT,   // Deprecated. Autogenerated by .aidl now.
+        IS_WIDE_COLOR_DISPLAY,           // Deprecated. Autogenerated by .aidl now.
+        GET_DISPLAY_NATIVE_PRIMARIES,    // Deprecated. Autogenerated by .aidl now.
+        GET_PHYSICAL_DISPLAY_IDS,        // Deprecated. Autogenerated by .aidl now.
+        ADD_REGION_SAMPLING_LISTENER,    // Deprecated. Autogenerated by .aidl now.
+        REMOVE_REGION_SAMPLING_LISTENER, // Deprecated. Autogenerated by .aidl now.
+        SET_DESIRED_DISPLAY_MODE_SPECS,  // Deprecated. Autogenerated by .aidl now.
+        GET_DESIRED_DISPLAY_MODE_SPECS,  // Deprecated. Autogenerated by .aidl now.
+        GET_DISPLAY_BRIGHTNESS_SUPPORT,  // Deprecated. Autogenerated by .aidl now.
+        SET_DISPLAY_BRIGHTNESS,          // Deprecated. Autogenerated by .aidl now.
+        CAPTURE_DISPLAY_BY_ID,           // Deprecated. Autogenerated by .aidl now.
+        NOTIFY_POWER_BOOST,              // Deprecated. Autogenerated by .aidl now.
+        SET_GLOBAL_SHADOW_SETTINGS,
+        GET_AUTO_LOW_LATENCY_MODE_SUPPORT, // Deprecated. Use GET_DYNAMIC_DISPLAY_INFO instead.
+        SET_AUTO_LOW_LATENCY_MODE,         // Deprecated. Autogenerated by .aidl now.
+        GET_GAME_CONTENT_TYPE_SUPPORT,     // Deprecated. Use GET_DYNAMIC_DISPLAY_INFO instead.
+        SET_GAME_CONTENT_TYPE,             // Deprecated. Use GET_DYNAMIC_DISPLAY_INFO instead.
+        SET_FRAME_RATE,                    // Deprecated. Autogenerated by .aidl now.
+        // Deprecated. Use DisplayManager.setShouldAlwaysRespectAppRequestedMode(true);
+        ACQUIRE_FRAME_RATE_FLEXIBILITY_TOKEN,
+        SET_FRAME_TIMELINE_INFO,        // Deprecated. Autogenerated by .aidl now.
+        ADD_TRANSACTION_TRACE_LISTENER, // Deprecated. Autogenerated by .aidl now.
+        GET_GPU_CONTEXT_PRIORITY,
+        GET_MAX_ACQUIRED_BUFFER_COUNT,
+        GET_DYNAMIC_DISPLAY_INFO,            // Deprecated. Autogenerated by .aidl now.
+        ADD_FPS_LISTENER,                    // Deprecated. Autogenerated by .aidl now.
+        REMOVE_FPS_LISTENER,                 // Deprecated. Autogenerated by .aidl now.
+        OVERRIDE_HDR_TYPES,                  // Deprecated. Autogenerated by .aidl now.
+        ADD_HDR_LAYER_INFO_LISTENER,         // Deprecated. Autogenerated by .aidl now.
+        REMOVE_HDR_LAYER_INFO_LISTENER,      // Deprecated. Autogenerated by .aidl now.
+        ON_PULL_ATOM,                        // Deprecated. Autogenerated by .aidl now.
+        ADD_TUNNEL_MODE_ENABLED_LISTENER,    // Deprecated. Autogenerated by .aidl now.
+        REMOVE_TUNNEL_MODE_ENABLED_LISTENER, // Deprecated. Autogenerated by .aidl now.
+        ADD_WINDOW_INFOS_LISTENER,           // Deprecated. Autogenerated by .aidl now.
+        REMOVE_WINDOW_INFOS_LISTENER,        // Deprecated. Autogenerated by .aidl now.
+        GET_PRIMARY_PHYSICAL_DISPLAY_ID,     // Deprecated. Autogenerated by .aidl now.
+        GET_DISPLAY_DECORATION_SUPPORT,
+        GET_BOOT_DISPLAY_MODE_SUPPORT, // Deprecated. Autogenerated by .aidl now.
+        SET_BOOT_DISPLAY_MODE,         // Deprecated. Autogenerated by .aidl now.
+        CLEAR_BOOT_DISPLAY_MODE,       // Deprecated. Autogenerated by .aidl now.
+        SET_OVERRIDE_FRAME_RATE,       // Deprecated. Autogenerated by .aidl now.
+        // Always append new enum to the end.
     };
 
     virtual status_t onTransact(uint32_t code, const Parcel& data,
             Parcel* reply, uint32_t flags = 0);
 };
 
-// ----------------------------------------------------------------------------
-
-}; // namespace android
-
-#endif // ANDROID_GUI_ISURFACE_COMPOSER_H
+} // namespace android

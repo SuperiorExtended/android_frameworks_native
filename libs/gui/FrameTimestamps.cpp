@@ -18,10 +18,11 @@
 
 #define LOG_TAG "FrameEvents"
 
+#include <LibGuiProperties.sysprop.h>
+#include <android-base/stringprintf.h>
 #include <cutils/compiler.h>  // For CC_[UN]LIKELY
 #include <inttypes.h>
 #include <utils/Log.h>
-#include <utils/String8.h>
 
 #include <algorithm>
 #include <limits>
@@ -29,6 +30,7 @@
 
 namespace android {
 
+using base::StringAppendF;
 
 // ============================================================================
 // FrameEvents
@@ -86,50 +88,49 @@ void FrameEvents::checkFencesForCompletion() {
     releaseFence->getSignalTime();
 }
 
-static void dumpFenceTime(String8& outString, const char* name,
-        bool pending, const FenceTime& fenceTime) {
-    outString.appendFormat("--- %s", name);
+static void dumpFenceTime(std::string& outString, const char* name, bool pending,
+                          const FenceTime& fenceTime) {
+    StringAppendF(&outString, "--- %s", name);
     nsecs_t signalTime = fenceTime.getCachedSignalTime();
     if (Fence::isValidTimestamp(signalTime)) {
-        outString.appendFormat("%" PRId64 "\n", signalTime);
+        StringAppendF(&outString, "%" PRId64 "\n", signalTime);
     } else if (pending || signalTime == Fence::SIGNAL_TIME_PENDING) {
-        outString.appendFormat("Pending\n");
+        outString.append("Pending\n");
     } else if (&fenceTime == FenceTime::NO_FENCE.get()){
-        outString.appendFormat("N/A\n");
+        outString.append("N/A\n");
     } else {
-        outString.appendFormat("Error\n");
+        outString.append("Error\n");
     }
 }
 
-void FrameEvents::dump(String8& outString) const
-{
+void FrameEvents::dump(std::string& outString) const {
     if (!valid) {
         return;
     }
 
-    outString.appendFormat("-- Frame %" PRIu64 "\n", frameNumber);
-    outString.appendFormat("--- Posted      \t%" PRId64 "\n", postedTime);
-    outString.appendFormat("--- Req. Present\t%" PRId64 "\n", requestedPresentTime);
+    StringAppendF(&outString, "-- Frame %" PRIu64 "\n", frameNumber);
+    StringAppendF(&outString, "--- Posted      \t%" PRId64 "\n", postedTime);
+    StringAppendF(&outString, "--- Req. Present\t%" PRId64 "\n", requestedPresentTime);
 
-    outString.appendFormat("--- Latched     \t");
+    outString.append("--- Latched     \t");
     if (FrameEvents::isValidTimestamp(latchTime)) {
-        outString.appendFormat("%" PRId64 "\n", latchTime);
+        StringAppendF(&outString, "%" PRId64 "\n", latchTime);
     } else {
-        outString.appendFormat("Pending\n");
+        outString.append("Pending\n");
     }
 
-    outString.appendFormat("--- Refresh (First)\t");
+    outString.append("--- Refresh (First)\t");
     if (FrameEvents::isValidTimestamp(firstRefreshStartTime)) {
-        outString.appendFormat("%" PRId64 "\n", firstRefreshStartTime);
+        StringAppendF(&outString, "%" PRId64 "\n", firstRefreshStartTime);
     } else {
-        outString.appendFormat("Pending\n");
+        outString.append("Pending\n");
     }
 
-    outString.appendFormat("--- Refresh (Last)\t");
+    outString.append("--- Refresh (Last)\t");
     if (FrameEvents::isValidTimestamp(lastRefreshStartTime)) {
-        outString.appendFormat("%" PRId64 "\n", lastRefreshStartTime);
+        StringAppendF(&outString, "%" PRId64 "\n", lastRefreshStartTime);
     } else {
-        outString.appendFormat("Pending\n");
+        outString.append("Pending\n");
     }
 
     dumpFenceTime(outString, "Acquire           \t",
@@ -139,11 +140,11 @@ void FrameEvents::dump(String8& outString) const
     dumpFenceTime(outString, "Display Present   \t",
             !addPostCompositeCalled, *displayPresentFence);
 
-    outString.appendFormat("--- DequeueReady  \t");
+    outString.append("--- DequeueReady  \t");
     if (FrameEvents::isValidTimestamp(dequeueReadyTime)) {
-        outString.appendFormat("%" PRId64 "\n", dequeueReadyTime);
+        StringAppendF(&outString, "%" PRId64 "\n", dequeueReadyTime);
     } else {
-        outString.appendFormat("Pending\n");
+        outString.append("Pending\n");
     }
 
     dumpFenceTime(outString, "Release           \t",
@@ -158,7 +159,7 @@ void FrameEvents::dump(String8& outString) const
 namespace {
 
 struct FrameNumberEqual {
-    FrameNumberEqual(uint64_t frameNumber) : mFrameNumber(frameNumber) {}
+    explicit FrameNumberEqual(uint64_t frameNumber) : mFrameNumber(frameNumber) {}
     bool operator()(const FrameEvents& frame) {
         return frame.valid && mFrameNumber == frame.frameNumber;
     }
@@ -166,6 +167,12 @@ struct FrameNumberEqual {
 };
 
 }  // namespace
+
+const size_t FrameEventHistory::INITIAL_MAX_FRAME_HISTORY =
+        sysprop::LibGuiProperties::frame_event_history_size().value_or(8);
+
+FrameEventHistory::FrameEventHistory()
+      : mFrames(std::vector<FrameEvents>(INITIAL_MAX_FRAME_HISTORY)) {}
 
 FrameEventHistory::~FrameEventHistory() = default;
 
@@ -206,11 +213,11 @@ static bool FrameNumberLessThan(
     return lhs.valid;
 }
 
-void FrameEventHistory::dump(String8& outString) const {
+void FrameEventHistory::dump(std::string& outString) const {
     auto earliestFrame = std::min_element(
             mFrames.begin(), mFrames.end(), &FrameNumberLessThan);
     if (!earliestFrame->valid) {
-        outString.appendFormat("-- N/A\n");
+        outString.append("-- N/A\n");
         return;
     }
     for (auto frame = earliestFrame; frame != mFrames.end(); ++frame) {
@@ -220,7 +227,6 @@ void FrameEventHistory::dump(String8& outString) const {
         frame->dump(outString);
     }
 }
-
 
 // ============================================================================
 // ProducerFrameEventHistory
@@ -266,6 +272,13 @@ void ProducerFrameEventHistory::updateAcquireFence(
 void ProducerFrameEventHistory::applyDelta(
         const FrameEventHistoryDelta& delta) {
     mCompositorTiming = delta.mCompositorTiming;
+
+    // Deltas should have enough reserved capacity for the consumer-side, therefore if there's a
+    // different capacity, we re-sized on the consumer side and now need to resize on the producer
+    // side.
+    if (delta.mDeltas.capacity() > mFrames.capacity()) {
+        resize(delta.mDeltas.capacity());
+    }
 
     for (auto& d : delta.mDeltas) {
         // Avoid out-of-bounds access.
@@ -343,16 +356,58 @@ std::shared_ptr<FenceTime> ProducerFrameEventHistory::createFenceTime(
     return std::make_shared<FenceTime>(fence);
 }
 
+void ProducerFrameEventHistory::resize(size_t newSize) {
+    // we don't want to drop events by resizing too small, so don't resize in the negative direction
+    if (newSize <= mFrames.size()) {
+        return;
+    }
+
+    // This algorithm for resizing needs to be the same as ConsumerFrameEventHistory::resize,
+    // because the indexes need to match when communicating the FrameEventDeltas.
+
+    // We need to find the oldest frame, because that frame needs to move to index 0 in the new
+    // frame history.
+    size_t oldestFrameIndex = 0;
+    size_t oldestFrameNumber = INT32_MAX;
+    for (size_t i = 0; i < mFrames.size(); ++i) {
+        if (mFrames[i].frameNumber < oldestFrameNumber && mFrames[i].valid) {
+            oldestFrameNumber = mFrames[i].frameNumber;
+            oldestFrameIndex = i;
+        }
+    }
+
+    // move the existing frame information into a new vector, so that the oldest frames are at
+    // index 0, and the latest frames are at the end of the vector
+    std::vector<FrameEvents> newFrames(newSize);
+    size_t oldI = oldestFrameIndex;
+    size_t newI = 0;
+    do {
+        if (mFrames[oldI].valid) {
+            newFrames[newI++] = std::move(mFrames[oldI]);
+        }
+        oldI = (oldI + 1) % mFrames.size();
+    } while (oldI != oldestFrameIndex);
+
+    mFrames = std::move(newFrames);
+    mAcquireOffset = 0; // this is just a hint, so setting this to anything is fine
+}
 
 // ============================================================================
 // ConsumerFrameEventHistory
 // ============================================================================
+
+ConsumerFrameEventHistory::ConsumerFrameEventHistory()
+      : mFramesDirty(std::vector<FrameEventDirtyFields>(INITIAL_MAX_FRAME_HISTORY)) {}
 
 ConsumerFrameEventHistory::~ConsumerFrameEventHistory() = default;
 
 void ConsumerFrameEventHistory::onDisconnect() {
     mCurrentConnectId++;
     mProducerWantsEvents = false;
+}
+
+void ConsumerFrameEventHistory::setProducerWantsEvents() {
+    mProducerWantsEvents = true;
 }
 
 void ConsumerFrameEventHistory::initializeCompositorTiming(
@@ -443,9 +498,8 @@ void ConsumerFrameEventHistory::addRelease(uint64_t frameNumber,
     mFramesDirty[mReleaseOffset].setDirty<FrameEvent::RELEASE>();
 }
 
-void ConsumerFrameEventHistory::getFrameDelta(
-        FrameEventHistoryDelta* delta,
-        const std::array<FrameEvents, MAX_FRAME_HISTORY>::iterator& frame) {
+void ConsumerFrameEventHistory::getFrameDelta(FrameEventHistoryDelta* delta,
+                                              const std::vector<FrameEvents>::iterator& frame) {
     mProducerWantsEvents = true;
     size_t i = static_cast<size_t>(std::distance(mFrames.begin(), frame));
     if (mFramesDirty[i].anyDirty()) {
@@ -477,6 +531,36 @@ void ConsumerFrameEventHistory::getAndResetDelta(
     }
 }
 
+void ConsumerFrameEventHistory::resize(size_t newSize) {
+    // we don't want to drop events by resizing too small, so don't resize in the negative direction
+    if (newSize <= mFrames.size()) {
+        return;
+    }
+
+    // This algorithm for resizing needs to be the same as ProducerFrameEventHistory::resize,
+    // because the indexes need to match when communicating the FrameEventDeltas.
+
+    // move the existing frame information into a new vector, so that the oldest frames are at
+    // index 0, and the latest frames are towards the end of the vector
+    std::vector<FrameEvents> newFrames(newSize);
+    std::vector<FrameEventDirtyFields> newFramesDirty(newSize);
+    size_t oldestFrameIndex = mQueueOffset;
+    size_t oldI = oldestFrameIndex;
+    size_t newI = 0;
+    do {
+        if (mFrames[oldI].valid) {
+            newFrames[newI] = std::move(mFrames[oldI]);
+            newFramesDirty[newI] = mFramesDirty[oldI];
+            newI += 1;
+        }
+        oldI = (oldI + 1) % mFrames.size();
+    } while (oldI != oldestFrameIndex);
+
+    mFrames = std::move(newFrames);
+    mFramesDirty = std::move(newFramesDirty);
+    mQueueOffset = newI;
+    mCompositionOffset = 0; // this is just a hint, so setting this to anything is fine
+}
 
 // ============================================================================
 // FrameEventsDelta
@@ -546,8 +630,7 @@ status_t FrameEventsDelta::flatten(void*& buffer, size_t& size, int*& fds,
         return NO_MEMORY;
     }
 
-    if (mIndex >= FrameEventHistory::MAX_FRAME_HISTORY ||
-            mIndex > std::numeric_limits<uint16_t>::max()) {
+    if (mIndex >= UINT8_MAX || mIndex < 0) {
         return BAD_VALUE;
     }
 
@@ -589,7 +672,7 @@ status_t FrameEventsDelta::unflatten(void const*& buffer, size_t& size,
     uint16_t temp16 = 0;
     FlattenableUtils::read(buffer, size, temp16);
     mIndex = temp16;
-    if (mIndex >= FrameEventHistory::MAX_FRAME_HISTORY) {
+    if (mIndex >= UINT8_MAX) {
         return BAD_VALUE;
     }
     uint8_t temp8 = 0;
@@ -615,6 +698,25 @@ status_t FrameEventsDelta::unflatten(void const*& buffer, size_t& size,
     return NO_ERROR;
 }
 
+uint64_t FrameEventsDelta::getFrameNumber() const {
+    return mFrameNumber;
+}
+
+bool FrameEventsDelta::getLatchTime(nsecs_t* latchTime) const {
+    if (mLatchTime == FrameEvents::TIMESTAMP_PENDING) {
+        return false;
+    }
+    *latchTime = mLatchTime;
+    return true;
+}
+
+bool FrameEventsDelta::getDisplayPresentFence(sp<Fence>* fence) const {
+    if (mDisplayPresentFence.fence == Fence::NO_FENCE) {
+        return false;
+    }
+    *fence = mDisplayPresentFence.fence;
+    return true;
+}
 
 // ============================================================================
 // FrameEventHistoryDelta
@@ -653,7 +755,7 @@ size_t FrameEventHistoryDelta::getFdCount() const {
 
 status_t FrameEventHistoryDelta::flatten(
             void*& buffer, size_t& size, int*& fds, size_t& count) const {
-    if (mDeltas.size() > FrameEventHistory::MAX_FRAME_HISTORY) {
+    if (mDeltas.size() > UINT8_MAX) {
         return BAD_VALUE;
     }
     if (size < getFlattenedSize()) {
@@ -683,7 +785,7 @@ status_t FrameEventHistoryDelta::unflatten(
 
     uint32_t deltaCount = 0;
     FlattenableUtils::read(buffer, size, deltaCount);
-    if (deltaCount > FrameEventHistory::MAX_FRAME_HISTORY) {
+    if (deltaCount > UINT8_MAX) {
         return BAD_VALUE;
     }
     mDeltas.resize(deltaCount);
@@ -696,5 +798,12 @@ status_t FrameEventHistoryDelta::unflatten(
     return NO_ERROR;
 }
 
+std::vector<FrameEventsDelta>::const_iterator FrameEventHistoryDelta::begin() const {
+    return mDeltas.begin();
+}
+
+std::vector<FrameEventsDelta>::const_iterator FrameEventHistoryDelta::end() const {
+    return mDeltas.end();
+}
 
 } // namespace android

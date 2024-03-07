@@ -116,7 +116,7 @@ struct ProcResults {
         if (time > max_time_bucket) {
             m_long_transactions++;
         }
-        m_buckets[min(time, max_time_bucket-1) / time_per_bucket] += 1;
+        m_buckets[min((uint32_t)(time / time_per_bucket), num_buckets - 1)] += 1;
         m_best = min(time, m_best);
         m_worst = max(time, m_worst);
         m_transactions += 1;
@@ -249,12 +249,13 @@ Pipe make_worker(int num, int iterations, int worker_count, int payload_size, bo
     pid_t pid = fork();
     if (pid) {
         /* parent */
-        return move(get<0>(pipe_pair));
+        return std::move(get<0>(pipe_pair));
     } else {
         /* child */
-        worker_fx(num, worker_count, iterations, payload_size, cs_pair, move(get<1>(pipe_pair)));
+        worker_fx(num, worker_count, iterations, payload_size, cs_pair,
+                  std::move(get<1>(pipe_pair)));
         /* never get here */
-        return move(get<0>(pipe_pair));
+        return std::move(get<0>(pipe_pair));
     }
 
 }

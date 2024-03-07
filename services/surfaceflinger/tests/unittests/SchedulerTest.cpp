@@ -1,189 +1,435 @@
-#undef LOG_TAG
-#define LOG_TAG "SchedulerUnittests"
+/*
+ * Copyright 2019 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
+#include <ftl/fake_guard.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-
 #include <log/log.h>
 
 #include <mutex>
 
-#include "AsyncCallRecorder.h"
-#include "Scheduler/DispSync.h"
-#include "Scheduler/EventControlThread.h"
 #include "Scheduler/EventThread.h"
-#include "Scheduler/Scheduler.h"
-#include "mock/MockDispSync.h"
+#include "Scheduler/RefreshRateSelector.h"
+#include "TestableScheduler.h"
+#include "TestableSurfaceFlinger.h"
+#include "mock/DisplayHardware/MockDisplayMode.h"
 #include "mock/MockEventThread.h"
+#include "mock/MockLayer.h"
+#include "mock/MockSchedulerCallback.h"
+
+namespace android::scheduler {
+
+using android::mock::createDisplayMode;
 
 using testing::_;
 using testing::Return;
 
-namespace android {
+namespace {
+
+using MockEventThread = android::mock::EventThread;
+using MockLayer = android::mock::MockLayer;
 
 class SchedulerTest : public testing::Test {
 protected:
-    class MockEventThreadConnection : public BnDisplayEventConnection {
+    class MockEventThreadConnection : public android::EventThreadConnection {
     public:
-        MockEventThreadConnection() = default;
+        explicit MockEventThreadConnection(EventThread* eventThread)
+              : EventThreadConnection(eventThread, /*callingUid*/ static_cast<uid_t>(0),
+                                      ResyncCallback()) {}
         ~MockEventThreadConnection() = default;
 
-        MOCK_METHOD1(stealReceiveChannel, status_t(gui::BitTube* outChannel));
-        MOCK_METHOD1(setVsyncRate, status_t(uint32_t count));
-        MOCK_METHOD0(requestNextVsync, void());
-    };
-
-    /**
-     * This mock Scheduler class uses implementation of mock::EventThread but keeps everything else
-     * the same.
-     */
-    class MockScheduler : public android::Scheduler {
-    public:
-        MockScheduler(std::unique_ptr<EventThread> eventThread)
-              : Scheduler([](bool) {}), mEventThread(std::move(eventThread)) {}
-
-        std::unique_ptr<EventThread> makeEventThread(
-                const std::string& /* connectionName */, DispSync* /* dispSync */,
-                nsecs_t /* phaseOffsetNs */,
-                impl::EventThread::ResyncWithRateLimitCallback /* resyncCallback */,
-                impl::EventThread::InterceptVSyncsCallback /* interceptCallback */) override {
-            return std::move(mEventThread);
-        }
-
-        MockScheduler() = default;
-        ~MockScheduler() override = default;
-
-        std::unique_ptr<EventThread> mEventThread;
+        MOCK_METHOD1(stealReceiveChannel, binder::Status(gui::BitTube* outChannel));
+        MOCK_METHOD1(setVsyncRate, binder::Status(int count));
+        MOCK_METHOD0(requestNextVsync, binder::Status());
     };
 
     SchedulerTest();
-    ~SchedulerTest() override;
 
-    sp<Scheduler::ConnectionHandle> mConnectionHandle;
-    mock::DispSync* mPrimaryDispSync = new mock::DispSync();
-    mock::EventThread* mEventThread;
-    std::unique_ptr<MockScheduler> mScheduler;
+    static constexpr PhysicalDisplayId kDisplayId1 = PhysicalDisplayId::fromPort(255u);
+    static inline const ftl::NonNull<DisplayModePtr> kDisplay1Mode60 =
+            ftl::as_non_null(createDisplayMode(kDisplayId1, DisplayModeId(0), 60_Hz));
+    static inline const ftl::NonNull<DisplayModePtr> kDisplay1Mode120 =
+            ftl::as_non_null(createDisplayMode(kDisplayId1, DisplayModeId(1), 120_Hz));
+    static inline const DisplayModes kDisplay1Modes = makeModes(kDisplay1Mode60, kDisplay1Mode120);
+
+    static constexpr PhysicalDisplayId kDisplayId2 = PhysicalDisplayId::fromPort(254u);
+    static inline const ftl::NonNull<DisplayModePtr> kDisplay2Mode60 =
+            ftl::as_non_null(createDisplayMode(kDisplayId2, DisplayModeId(0), 60_Hz));
+    static inline const ftl::NonNull<DisplayModePtr> kDisplay2Mode120 =
+            ftl::as_non_null(createDisplayMode(kDisplayId2, DisplayModeId(1), 120_Hz));
+    static inline const DisplayModes kDisplay2Modes = makeModes(kDisplay2Mode60, kDisplay2Mode120);
+
+    static constexpr PhysicalDisplayId kDisplayId3 = PhysicalDisplayId::fromPort(253u);
+    static inline const ftl::NonNull<DisplayModePtr> kDisplay3Mode60 =
+            ftl::as_non_null(createDisplayMode(kDisplayId3, DisplayModeId(0), 60_Hz));
+    static inline const DisplayModes kDisplay3Modes = makeModes(kDisplay3Mode60);
+
+    std::shared_ptr<RefreshRateSelector> mSelector =
+            std::make_shared<RefreshRateSelector>(makeModes(kDisplay1Mode60),
+                                                  kDisplay1Mode60->getId());
+
+    mock::SchedulerCallback mSchedulerCallback;
+    TestableScheduler* mScheduler = new TestableScheduler{mSelector, mSchedulerCallback};
+
+    ConnectionHandle mConnectionHandle;
+    MockEventThread* mEventThread;
     sp<MockEventThreadConnection> mEventThreadConnection;
 
-    AsyncCallRecorder<void (*)()> mResyncCallRecorder;
-    AsyncCallRecorder<void (*)(nsecs_t)> mInterceptVSyncCallRecorder;
+    TestableSurfaceFlinger mFlinger;
 };
 
 SchedulerTest::SchedulerTest() {
-    const ::testing::TestInfo* const test_info =
-            ::testing::UnitTest::GetInstance()->current_test_info();
-    ALOGD("**** Setting up for %s.%s\n", test_info->test_case_name(), test_info->name());
-
-    std::unique_ptr<mock::EventThread> eventThread = std::make_unique<mock::EventThread>();
+    auto eventThread = std::make_unique<MockEventThread>();
     mEventThread = eventThread.get();
-    mScheduler = std::make_unique<MockScheduler>(std::move(eventThread));
-    mEventThreadConnection = new MockEventThreadConnection();
+    EXPECT_CALL(*mEventThread, registerDisplayEventConnection(_)).WillOnce(Return(0));
+
+    mEventThreadConnection = sp<MockEventThreadConnection>::make(mEventThread);
 
     // createConnection call to scheduler makes a createEventConnection call to EventThread. Make
     // sure that call gets executed and returns an EventThread::Connection object.
-    EXPECT_CALL(*mEventThread, createEventConnection())
+    EXPECT_CALL(*mEventThread, createEventConnection(_, _))
             .WillRepeatedly(Return(mEventThreadConnection));
 
-    mConnectionHandle =
-            mScheduler->createConnection("appConnection", 16, mResyncCallRecorder.getInvocable(),
-                                         mInterceptVSyncCallRecorder.getInvocable());
-}
+    mConnectionHandle = mScheduler->createConnection(std::move(eventThread));
+    EXPECT_TRUE(mConnectionHandle);
 
-SchedulerTest::~SchedulerTest() {
-    const ::testing::TestInfo* const test_info =
-            ::testing::UnitTest::GetInstance()->current_test_info();
-    ALOGD("**** Tearing down after %s.%s\n", test_info->test_case_name(), test_info->name());
-}
-
-namespace {
-/* ------------------------------------------------------------------------
- * Test cases
- */
-TEST_F(SchedulerTest, canCreateAndDestroyTest) {
-    EXPECT_FALSE(mResyncCallRecorder.waitForCall().has_value());
-    EXPECT_FALSE(mInterceptVSyncCallRecorder.waitForCall().has_value());
-    EXPECT_EQ(0, mConnectionHandle->id);
-}
-
-TEST_F(SchedulerTest, testNullPtr) {
-    // Passing a null pointer for ConnectionHandle is a valid argument. The code doesn't throw any
-    // exceptions, just gracefully continues.
-    sp<IDisplayEventConnection> returnedValue;
-    ASSERT_NO_FATAL_FAILURE(returnedValue = mScheduler->createDisplayEventConnection(nullptr));
-    EXPECT_TRUE(returnedValue == nullptr);
-    EXPECT_TRUE(mScheduler->getEventThread(nullptr) == nullptr);
-    EXPECT_TRUE(mScheduler->getEventConnection(nullptr) == nullptr);
-    ASSERT_NO_FATAL_FAILURE(
-            mScheduler->hotplugReceived(nullptr, EventThread::DisplayType::Primary, false));
-    ASSERT_NO_FATAL_FAILURE(mScheduler->onScreenAcquired(nullptr));
-    ASSERT_NO_FATAL_FAILURE(mScheduler->onScreenReleased(nullptr));
-    String8 testString;
-    ASSERT_NO_FATAL_FAILURE(mScheduler->dump(nullptr, testString));
-    EXPECT_TRUE(testString == "");
-    ASSERT_NO_FATAL_FAILURE(mScheduler->setPhaseOffset(nullptr, 10));
-}
-
-TEST_F(SchedulerTest, invalidConnectionHandle) {
-    // Passing an invalid ConnectionHandle is a valid argument. The code doesn't throw any
-    // exceptions, just gracefully continues.
-    sp<Scheduler::ConnectionHandle> connectionHandle = new Scheduler::ConnectionHandle(20);
-
-    sp<IDisplayEventConnection> returnedValue;
-    ASSERT_NO_FATAL_FAILURE(returnedValue =
-                                    mScheduler->createDisplayEventConnection(connectionHandle));
-    EXPECT_TRUE(returnedValue == nullptr);
-    EXPECT_TRUE(mScheduler->getEventThread(connectionHandle) == nullptr);
-    EXPECT_TRUE(mScheduler->getEventConnection(connectionHandle) == nullptr);
-
-    // The EXPECT_CALLS make sure we don't call the functions on the subsequent event threads.
-    EXPECT_CALL(*mEventThread, onHotplugReceived(_, _)).Times(0);
-    ASSERT_NO_FATAL_FAILURE(mScheduler->hotplugReceived(connectionHandle,
-                                                        EventThread::DisplayType::Primary, false));
-
-    EXPECT_CALL(*mEventThread, onScreenAcquired()).Times(0);
-    ASSERT_NO_FATAL_FAILURE(mScheduler->onScreenAcquired(connectionHandle));
-
-    EXPECT_CALL(*mEventThread, onScreenReleased()).Times(0);
-    ASSERT_NO_FATAL_FAILURE(mScheduler->onScreenReleased(connectionHandle));
-
-    String8 testString;
-    EXPECT_CALL(*mEventThread, dump(_)).Times(0);
-    ASSERT_NO_FATAL_FAILURE(mScheduler->dump(connectionHandle, testString));
-    EXPECT_TRUE(testString == "");
-
-    EXPECT_CALL(*mEventThread, setPhaseOffset(_)).Times(0);
-    ASSERT_NO_FATAL_FAILURE(mScheduler->setPhaseOffset(connectionHandle, 10));
-}
-
-TEST_F(SchedulerTest, validConnectionHandle) {
-    sp<IDisplayEventConnection> returnedValue;
-    ASSERT_NO_FATAL_FAILURE(returnedValue =
-                                    mScheduler->createDisplayEventConnection(mConnectionHandle));
-    EXPECT_TRUE(returnedValue != nullptr);
-    ASSERT_EQ(returnedValue, mEventThreadConnection);
-
-    EXPECT_TRUE(mScheduler->getEventThread(mConnectionHandle) != nullptr);
-    EXPECT_TRUE(mScheduler->getEventConnection(mConnectionHandle) != nullptr);
-
-    EXPECT_CALL(*mEventThread, onHotplugReceived(EventThread::DisplayType::Primary, false))
-            .Times(1);
-    ASSERT_NO_FATAL_FAILURE(mScheduler->hotplugReceived(mConnectionHandle,
-                                                        EventThread::DisplayType::Primary, false));
-
-    EXPECT_CALL(*mEventThread, onScreenAcquired()).Times(1);
-    ASSERT_NO_FATAL_FAILURE(mScheduler->onScreenAcquired(mConnectionHandle));
-
-    EXPECT_CALL(*mEventThread, onScreenReleased()).Times(1);
-    ASSERT_NO_FATAL_FAILURE(mScheduler->onScreenReleased(mConnectionHandle));
-
-    String8 testString("dump");
-    EXPECT_CALL(*mEventThread, dump(testString)).Times(1);
-    ASSERT_NO_FATAL_FAILURE(mScheduler->dump(mConnectionHandle, testString));
-    EXPECT_TRUE(testString != "");
-
-    EXPECT_CALL(*mEventThread, setPhaseOffset(10)).Times(1);
-    ASSERT_NO_FATAL_FAILURE(mScheduler->setPhaseOffset(mConnectionHandle, 10));
+    mFlinger.resetScheduler(mScheduler);
 }
 
 } // namespace
-} // namespace android
+
+TEST_F(SchedulerTest, invalidConnectionHandle) {
+    ConnectionHandle handle;
+
+    const sp<IDisplayEventConnection> connection = mScheduler->createDisplayEventConnection(handle);
+
+    EXPECT_FALSE(connection);
+    EXPECT_FALSE(mScheduler->getEventConnection(handle));
+
+    // The EXPECT_CALLS make sure we don't call the functions on the subsequent event threads.
+    EXPECT_CALL(*mEventThread, onHotplugReceived(_, _)).Times(0);
+    mScheduler->onHotplugReceived(handle, kDisplayId1, false);
+
+    std::string output;
+    EXPECT_CALL(*mEventThread, dump(_)).Times(0);
+    mScheduler->dump(handle, output);
+    EXPECT_TRUE(output.empty());
+
+    EXPECT_CALL(*mEventThread, setDuration(10ns, 20ns)).Times(0);
+    mScheduler->setDuration(handle, 10ns, 20ns);
+}
+
+TEST_F(SchedulerTest, validConnectionHandle) {
+    const sp<IDisplayEventConnection> connection =
+            mScheduler->createDisplayEventConnection(mConnectionHandle);
+
+    ASSERT_EQ(mEventThreadConnection, connection);
+    EXPECT_TRUE(mScheduler->getEventConnection(mConnectionHandle));
+
+    EXPECT_CALL(*mEventThread, onHotplugReceived(kDisplayId1, false)).Times(1);
+    mScheduler->onHotplugReceived(mConnectionHandle, kDisplayId1, false);
+
+    std::string output("dump");
+    EXPECT_CALL(*mEventThread, dump(output)).Times(1);
+    mScheduler->dump(mConnectionHandle, output);
+    EXPECT_FALSE(output.empty());
+
+    EXPECT_CALL(*mEventThread, setDuration(10ns, 20ns)).Times(1);
+    mScheduler->setDuration(mConnectionHandle, 10ns, 20ns);
+
+    static constexpr size_t kEventConnections = 5;
+    EXPECT_CALL(*mEventThread, getEventThreadConnectionCount()).WillOnce(Return(kEventConnections));
+    EXPECT_EQ(kEventConnections, mScheduler->getEventThreadConnectionCount(mConnectionHandle));
+}
+
+TEST_F(SchedulerTest, registerDisplay) FTL_FAKE_GUARD(kMainThreadContext) {
+    // Hardware VSYNC should not change if the display is already registered.
+    EXPECT_CALL(mSchedulerCallback, requestHardwareVsync(kDisplayId1, false)).Times(0);
+    mScheduler->registerDisplay(kDisplayId1,
+                                std::make_shared<RefreshRateSelector>(kDisplay1Modes,
+                                                                      kDisplay1Mode60->getId()));
+
+    // TODO(b/241285191): Restore once VsyncSchedule::getPendingHardwareVsyncState is called by
+    // Scheduler::setDisplayPowerMode rather than SF::setPowerModeInternal.
+#if 0
+    // Hardware VSYNC should be disabled for newly registered displays.
+    EXPECT_CALL(mSchedulerCallback, requestHardwareVsync(kDisplayId2, false)).Times(1);
+    EXPECT_CALL(mSchedulerCallback, requestHardwareVsync(kDisplayId3, false)).Times(1);
+#endif
+
+    mScheduler->registerDisplay(kDisplayId2,
+                                std::make_shared<RefreshRateSelector>(kDisplay2Modes,
+                                                                      kDisplay2Mode60->getId()));
+    mScheduler->registerDisplay(kDisplayId3,
+                                std::make_shared<RefreshRateSelector>(kDisplay3Modes,
+                                                                      kDisplay3Mode60->getId()));
+
+    EXPECT_FALSE(mScheduler->getVsyncSchedule(kDisplayId1)->getPendingHardwareVsyncState());
+    EXPECT_FALSE(mScheduler->getVsyncSchedule(kDisplayId2)->getPendingHardwareVsyncState());
+    EXPECT_FALSE(mScheduler->getVsyncSchedule(kDisplayId3)->getPendingHardwareVsyncState());
+}
+
+TEST_F(SchedulerTest, chooseRefreshRateForContentIsNoopWhenModeSwitchingIsNotSupported) {
+    // The layer is registered at creation time and deregistered at destruction time.
+    sp<MockLayer> layer = sp<MockLayer>::make(mFlinger.flinger());
+
+    // recordLayerHistory should be a noop
+    ASSERT_EQ(0u, mScheduler->getNumActiveLayers());
+    mScheduler->recordLayerHistory(layer->getSequence(), layer->getLayerProps(), 0,
+                                   LayerHistory::LayerUpdateType::Buffer);
+    ASSERT_EQ(0u, mScheduler->getNumActiveLayers());
+
+    constexpr hal::PowerMode kPowerModeOn = hal::PowerMode::ON;
+    FTL_FAKE_GUARD(kMainThreadContext, mScheduler->setDisplayPowerMode(kDisplayId1, kPowerModeOn));
+
+    constexpr uint32_t kDisplayArea = 999'999;
+    mScheduler->onActiveDisplayAreaChanged(kDisplayArea);
+
+    EXPECT_CALL(mSchedulerCallback, requestDisplayModes(_)).Times(0);
+    mScheduler->chooseRefreshRateForContent();
+}
+
+TEST_F(SchedulerTest, updateDisplayModes) {
+    ASSERT_EQ(0u, mScheduler->layerHistorySize());
+    sp<MockLayer> layer = sp<MockLayer>::make(mFlinger.flinger());
+    ASSERT_EQ(1u, mScheduler->layerHistorySize());
+
+    // Replace `mSelector` with a new `RefreshRateSelector` that has different display modes.
+    mScheduler->registerDisplay(kDisplayId1,
+                                std::make_shared<RefreshRateSelector>(kDisplay1Modes,
+                                                                      kDisplay1Mode60->getId()));
+
+    ASSERT_EQ(0u, mScheduler->getNumActiveLayers());
+    mScheduler->recordLayerHistory(layer->getSequence(), layer->getLayerProps(), 0,
+                                   LayerHistory::LayerUpdateType::Buffer);
+    ASSERT_EQ(1u, mScheduler->getNumActiveLayers());
+}
+
+TEST_F(SchedulerTest, dispatchCachedReportedMode) {
+    mScheduler->clearCachedReportedMode();
+
+    EXPECT_CALL(*mEventThread, onModeChanged(_)).Times(0);
+    EXPECT_NO_FATAL_FAILURE(mScheduler->dispatchCachedReportedMode());
+}
+
+TEST_F(SchedulerTest, onNonPrimaryDisplayModeChanged_invalidParameters) {
+    const auto mode = DisplayMode::Builder(hal::HWConfigId(0))
+                              .setId(DisplayModeId(111))
+                              .setPhysicalDisplayId(kDisplayId1)
+                              .setVsyncPeriod(111111)
+                              .build();
+
+    // If the handle is incorrect, the function should return before
+    // onModeChange is called.
+    ConnectionHandle invalidHandle = {.id = 123};
+    EXPECT_NO_FATAL_FAILURE(
+            mScheduler->onNonPrimaryDisplayModeChanged(invalidHandle,
+                                                       {90_Hz, ftl::as_non_null(mode)}));
+    EXPECT_CALL(*mEventThread, onModeChanged(_)).Times(0);
+}
+
+TEST_F(SchedulerTest, calculateMaxAcquiredBufferCount) {
+    EXPECT_EQ(1, mFlinger.calculateMaxAcquiredBufferCount(60_Hz, 30ms));
+    EXPECT_EQ(2, mFlinger.calculateMaxAcquiredBufferCount(90_Hz, 30ms));
+    EXPECT_EQ(3, mFlinger.calculateMaxAcquiredBufferCount(120_Hz, 30ms));
+
+    EXPECT_EQ(2, mFlinger.calculateMaxAcquiredBufferCount(60_Hz, 40ms));
+
+    EXPECT_EQ(1, mFlinger.calculateMaxAcquiredBufferCount(60_Hz, 10ms));
+}
+
+MATCHER(Is120Hz, "") {
+    return isApproxEqual(arg.front().mode.fps, 120_Hz);
+}
+
+TEST_F(SchedulerTest, chooseRefreshRateForContentSelectsMaxRefreshRate) {
+    mScheduler->registerDisplay(kDisplayId1,
+                                std::make_shared<RefreshRateSelector>(kDisplay1Modes,
+                                                                      kDisplay1Mode60->getId()));
+
+    const sp<MockLayer> layer = sp<MockLayer>::make(mFlinger.flinger());
+    EXPECT_CALL(*layer, isVisible()).WillOnce(Return(true));
+
+    mScheduler->recordLayerHistory(layer->getSequence(), layer->getLayerProps(), 0,
+                                   LayerHistory::LayerUpdateType::Buffer);
+
+    constexpr hal::PowerMode kPowerModeOn = hal::PowerMode::ON;
+    FTL_FAKE_GUARD(kMainThreadContext, mScheduler->setDisplayPowerMode(kDisplayId1, kPowerModeOn));
+
+    constexpr uint32_t kDisplayArea = 999'999;
+    mScheduler->onActiveDisplayAreaChanged(kDisplayArea);
+
+    EXPECT_CALL(mSchedulerCallback, requestDisplayModes(Is120Hz())).Times(1);
+    mScheduler->chooseRefreshRateForContent();
+
+    // No-op if layer requirements have not changed.
+    EXPECT_CALL(mSchedulerCallback, requestDisplayModes(_)).Times(0);
+    mScheduler->chooseRefreshRateForContent();
+}
+
+TEST_F(SchedulerTest, chooseDisplayModesSingleDisplay) {
+    mScheduler->registerDisplay(kDisplayId1,
+                                std::make_shared<RefreshRateSelector>(kDisplay1Modes,
+                                                                      kDisplay1Mode60->getId()));
+
+    std::vector<RefreshRateSelector::LayerRequirement> layers =
+            std::vector<RefreshRateSelector::LayerRequirement>({{.weight = 1.f}, {.weight = 1.f}});
+    mScheduler->setContentRequirements(layers);
+    GlobalSignals globalSignals = {.idle = true};
+    mScheduler->setTouchStateAndIdleTimerPolicy(globalSignals);
+
+    using DisplayModeChoice = TestableScheduler::DisplayModeChoice;
+
+    auto modeChoices = mScheduler->chooseDisplayModes();
+    ASSERT_EQ(1u, modeChoices.size());
+
+    auto choice = modeChoices.get(kDisplayId1);
+    ASSERT_TRUE(choice);
+    EXPECT_EQ(choice->get(), DisplayModeChoice({60_Hz, kDisplay1Mode60}, globalSignals));
+
+    globalSignals = {.idle = false};
+    mScheduler->setTouchStateAndIdleTimerPolicy(globalSignals);
+
+    modeChoices = mScheduler->chooseDisplayModes();
+    ASSERT_EQ(1u, modeChoices.size());
+
+    choice = modeChoices.get(kDisplayId1);
+    ASSERT_TRUE(choice);
+    EXPECT_EQ(choice->get(), DisplayModeChoice({120_Hz, kDisplay1Mode120}, globalSignals));
+
+    globalSignals = {.touch = true};
+    mScheduler->replaceTouchTimer(10);
+    mScheduler->setTouchStateAndIdleTimerPolicy(globalSignals);
+
+    modeChoices = mScheduler->chooseDisplayModes();
+    ASSERT_EQ(1u, modeChoices.size());
+
+    choice = modeChoices.get(kDisplayId1);
+    ASSERT_TRUE(choice);
+    EXPECT_EQ(choice->get(), DisplayModeChoice({120_Hz, kDisplay1Mode120}, globalSignals));
+}
+
+TEST_F(SchedulerTest, chooseDisplayModesMultipleDisplays) {
+    mScheduler->registerDisplay(kDisplayId1,
+                                std::make_shared<RefreshRateSelector>(kDisplay1Modes,
+                                                                      kDisplay1Mode60->getId()));
+    mScheduler->registerDisplay(kDisplayId2,
+                                std::make_shared<RefreshRateSelector>(kDisplay2Modes,
+                                                                      kDisplay2Mode60->getId()));
+
+    using DisplayModeChoice = TestableScheduler::DisplayModeChoice;
+    TestableScheduler::DisplayModeChoiceMap expectedChoices;
+
+    {
+        const GlobalSignals globalSignals = {.idle = true};
+        expectedChoices =
+                ftl::init::map<const PhysicalDisplayId&,
+                               DisplayModeChoice>(kDisplayId1,
+                                                  FrameRateMode{60_Hz, kDisplay1Mode60},
+                                                  globalSignals)(kDisplayId2,
+                                                                 FrameRateMode{60_Hz,
+                                                                               kDisplay2Mode60},
+                                                                 globalSignals);
+
+        std::vector<RefreshRateSelector::LayerRequirement> layers = {{.weight = 1.f},
+                                                                     {.weight = 1.f}};
+        mScheduler->setContentRequirements(layers);
+        mScheduler->setTouchStateAndIdleTimerPolicy(globalSignals);
+
+        const auto actualChoices = mScheduler->chooseDisplayModes();
+        EXPECT_EQ(expectedChoices, actualChoices);
+    }
+    {
+        const GlobalSignals globalSignals = {.idle = false};
+        expectedChoices =
+                ftl::init::map<const PhysicalDisplayId&,
+                               DisplayModeChoice>(kDisplayId1,
+                                                  FrameRateMode{120_Hz, kDisplay1Mode120},
+                                                  globalSignals)(kDisplayId2,
+                                                                 FrameRateMode{120_Hz,
+                                                                               kDisplay2Mode120},
+                                                                 globalSignals);
+
+        mScheduler->setTouchStateAndIdleTimerPolicy(globalSignals);
+
+        const auto actualChoices = mScheduler->chooseDisplayModes();
+        EXPECT_EQ(expectedChoices, actualChoices);
+    }
+    {
+        const GlobalSignals globalSignals = {.touch = true};
+        mScheduler->replaceTouchTimer(10);
+        mScheduler->setTouchStateAndIdleTimerPolicy(globalSignals);
+
+        expectedChoices =
+                ftl::init::map<const PhysicalDisplayId&,
+                               DisplayModeChoice>(kDisplayId1,
+                                                  FrameRateMode{120_Hz, kDisplay1Mode120},
+                                                  globalSignals)(kDisplayId2,
+                                                                 FrameRateMode{120_Hz,
+                                                                               kDisplay2Mode120},
+                                                                 globalSignals);
+
+        const auto actualChoices = mScheduler->chooseDisplayModes();
+        EXPECT_EQ(expectedChoices, actualChoices);
+    }
+    {
+        // The kDisplayId3 does not support 120Hz, The pacesetter display rate is chosen to be 120
+        // Hz. In this case only the display kDisplayId3 choose 60Hz as it does not support 120Hz.
+        mScheduler
+                ->registerDisplay(kDisplayId3,
+                                  std::make_shared<RefreshRateSelector>(kDisplay3Modes,
+                                                                        kDisplay3Mode60->getId()));
+
+        const GlobalSignals globalSignals = {.touch = true};
+        mScheduler->replaceTouchTimer(10);
+        mScheduler->setTouchStateAndIdleTimerPolicy(globalSignals);
+
+        expectedChoices = ftl::init::map<
+                const PhysicalDisplayId&,
+                DisplayModeChoice>(kDisplayId1, FrameRateMode{120_Hz, kDisplay1Mode120},
+                                   globalSignals)(kDisplayId2,
+                                                  FrameRateMode{120_Hz, kDisplay2Mode120},
+                                                  globalSignals)(kDisplayId3,
+                                                                 FrameRateMode{60_Hz,
+                                                                               kDisplay3Mode60},
+                                                                 globalSignals);
+
+        const auto actualChoices = mScheduler->chooseDisplayModes();
+        EXPECT_EQ(expectedChoices, actualChoices);
+    }
+    {
+        // We should choose 60Hz despite the touch signal as pacesetter only supports 60Hz
+        mScheduler->setPacesetterDisplay(kDisplayId3);
+        const GlobalSignals globalSignals = {.touch = true};
+        mScheduler->replaceTouchTimer(10);
+        mScheduler->setTouchStateAndIdleTimerPolicy(globalSignals);
+
+        expectedChoices = ftl::init::map<
+                const PhysicalDisplayId&,
+                DisplayModeChoice>(kDisplayId1, FrameRateMode{60_Hz, kDisplay1Mode60},
+                                   globalSignals)(kDisplayId2,
+                                                  FrameRateMode{60_Hz, kDisplay2Mode60},
+                                                  globalSignals)(kDisplayId3,
+                                                                 FrameRateMode{60_Hz,
+                                                                               kDisplay3Mode60},
+                                                                 globalSignals);
+
+        const auto actualChoices = mScheduler->chooseDisplayModes();
+        EXPECT_EQ(expectedChoices, actualChoices);
+    }
+}
+
+} // namespace android::scheduler

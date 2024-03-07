@@ -14,16 +14,21 @@
  * limitations under the License.
  */
 
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wconversion"
+
+#undef LOG_TAG
+#define LOG_TAG "MockComposer"
 #include "mock/DisplayHardware/MockComposer.h"
 
-namespace android {
-namespace Hwc2 {
-namespace mock {
+namespace android::Hwc2::mock {
 
 // Explicit default instantiation is recommended.
 Composer::Composer() = default;
 Composer::~Composer() = default;
 
-} // namespace mock
-} // namespace Hwc2
-} // namespace android
+} // namespace android::Hwc2::mock
+
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic pop // ignored "-Wconversion"

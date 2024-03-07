@@ -19,6 +19,7 @@
 
 #include <ui/Fence.h>
 #include <utils/Flattenable.h>
+#include <utils/Mutex.h>
 #include <utils/Timers.h>
 
 #include <atomic>
@@ -111,6 +112,13 @@ public:
     // Returns a snapshot of the FenceTime in its current state.
     Snapshot getSnapshot() const;
 
+    // wait waits for up to timeout milliseconds for the fence to signal.  If
+    // the fence signals then NO_ERROR is returned. If the timeout expires
+    // before the fence signals then -ETIME is returned.  A timeout of
+    // TIMEOUT_NEVER may be used to indicate that the call should wait
+    // indefinitely for the fence to signal.
+    status_t wait(int timeout);
+
     void signalForTest(nsecs_t signalTime);
 
 private:
@@ -133,6 +141,8 @@ private:
     sp<Fence> mFence{Fence::NO_FENCE};
     std::atomic<nsecs_t> mSignalTime{Fence::SIGNAL_TIME_INVALID};
 };
+
+using FenceTimePtr = std::shared_ptr<FenceTime>;
 
 // A queue of FenceTimes that are expected to signal in FIFO order.
 // Only maintains a queue of weak pointers so it doesn't keep references
@@ -159,7 +169,7 @@ public:
 
 private:
     mutable std::mutex mMutex;
-    std::queue<std::weak_ptr<FenceTime>> mQueue;
+    std::queue<std::weak_ptr<FenceTime>> mQueue GUARDED_BY(mMutex);
 };
 
 // Used by test code to create or get FenceTimes for a given Fence.
@@ -182,8 +192,15 @@ private:
 // before the new one is added.
 class FenceToFenceTimeMap {
 public:
-    // Create a new FenceTime with that wraps the provided Fence.
-    std::shared_ptr<FenceTime> createFenceTimeForTest(const sp<Fence>& fence);
+    using FencePair = std::pair<sp<Fence>, FenceTimePtr>;
+
+    FencePair makePendingFenceForTest() {
+        const auto fence = sp<Fence>::make();
+        return {fence, createFenceTimeForTest(fence)};
+    }
+
+    // Create a new FenceTime that wraps the provided Fence.
+    FenceTimePtr createFenceTimeForTest(const sp<Fence>&);
 
     // Signals all FenceTimes created through this class that are wrappers
     // around |fence|.
@@ -197,7 +214,6 @@ private:
     std::unordered_map<Fence*, std::vector<std::weak_ptr<FenceTime>>> mMap;
 };
 
-
-}; // namespace android
+} // namespace android
 
 #endif // ANDROID_FENCE_TIME_H

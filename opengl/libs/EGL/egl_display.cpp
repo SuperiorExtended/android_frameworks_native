@@ -14,48 +14,41 @@
  ** limitations under the License.
  */
 
-#define __STDC_LIMIT_MACROS 1
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include "egl_display.h"
 
+#include <SurfaceFlingerProperties.h>
+#include <android-base/properties.h>
+#include <android/dlext.h>
+#include <android/hardware/configstore/1.0/ISurfaceFlingerConfigs.h>
+#include <configstore/Utils.h>
+#include <dlfcn.h>
+#include <graphicsenv/GraphicsEnv.h>
+
 #include "../egl_impl.h"
-
-#include <EGL/eglext_angle.h>
-#include <private/EGL/display.h>
-
-#include <cutils/properties.h>
+#include "EGL/eglext_angle.h"
 #include "Loader.h"
 #include "egl_angle_platform.h"
 #include "egl_cache.h"
 #include "egl_object.h"
 #include "egl_tls.h"
-
-#include <android/dlext.h>
-#include <dlfcn.h>
-#include <graphicsenv/GraphicsEnv.h>
-
-#include <android/hardware/configstore/1.0/ISurfaceFlingerConfigs.h>
-#include <configstore/Utils.h>
+#include "private/EGL/display.h"
 
 using namespace android::hardware::configstore;
 using namespace android::hardware::configstore::V1_0;
 
-// ----------------------------------------------------------------------------
 namespace android {
-// ----------------------------------------------------------------------------
 
-static char const * const sVendorString     = "Android";
-static char const* const sVersionString14 = "1.4 Android META-EGL";
-static char const* const sVersionString15 = "1.5 Android META-EGL";
-static char const * const sClientApiString  = "OpenGL_ES";
+static const char* const sVendorString = "Android";
+static const char* const sVersionString14 = "1.4 Android META-EGL";
+static const char* const sVersionString15 = "1.5 Android META-EGL";
+static const char* const sClientApiString = "OpenGL_ES";
 
-extern char const * const gBuiltinExtensionString;
-extern char const * const gExtensionString;
+extern const char* const gBuiltinExtensionString;
+extern const char* const gExtensionString;
 
-extern void setGLHooksThreadSpecific(gl_hooks_t const *value);
-
-// ----------------------------------------------------------------------------
+extern void setGLHooksThreadSpecific(gl_hooks_t const* value);
 
 bool findExtension(const char* exts, const char* name, size_t nameLen) {
     if (exts) {
@@ -71,16 +64,25 @@ bool findExtension(const char* exts, const char* name, size_t nameLen) {
     return false;
 }
 
+bool needsAndroidPEglMitigation() {
+    static const int32_t vndk_version = base::GetIntProperty("ro.vndk.version", -1);
+    return vndk_version <= 28;
+}
+
 int egl_get_init_count(EGLDisplay dpy) {
     egl_display_t* eglDisplay = egl_display_t::get(dpy);
     return eglDisplay ? eglDisplay->getRefsCount() : 0;
 }
 
-egl_display_t egl_display_t::sDisplay[NUM_DISPLAYS];
+std::map<EGLDisplay, std::unique_ptr<egl_display_t>> egl_display_t::displayMap;
+std::mutex egl_display_t::displayMapLock;
 
-egl_display_t::egl_display_t() :
-    magic('_dpy'), finishOnSwap(false), traceGpuCompletion(false), refs(0), eglIsInitialized(false) {
-}
+egl_display_t::egl_display_t()
+      : magic('_dpy'),
+        finishOnSwap(false),
+        traceGpuCompletion(false),
+        refs(0),
+        eglIsInitialized(false) {}
 
 egl_display_t::~egl_display_t() {
     magic = 0;
@@ -92,11 +94,12 @@ egl_display_t* egl_display_t::get(EGLDisplay dpy) {
         return nullptr;
     }
 
-    uintptr_t index = uintptr_t(dpy)-1U;
-    if (index >= NUM_DISPLAYS || !sDisplay[index].isValid()) {
+    const std::lock_guard<std::mutex> lock(displayMapLock);
+    auto search = displayMap.find(dpy);
+    if (search == displayMap.end() || !search->second->isValid()) {
         return nullptr;
     }
-    return &sDisplay[index];
+    return search->second.get();
 }
 
 void egl_display_t::addObject(egl_object_t* object) {
@@ -122,83 +125,9 @@ bool egl_display_t::getObject(egl_object_t* object) const {
 
 EGLDisplay egl_display_t::getFromNativeDisplay(EGLNativeDisplayType disp,
                                                const EGLAttrib* attrib_list) {
-    if (uintptr_t(disp) >= NUM_DISPLAYS)
-        return nullptr;
+    if (uintptr_t(disp) >= NUM_DISPLAYS) return nullptr;
 
-    return sDisplay[uintptr_t(disp)].getPlatformDisplay(disp, attrib_list);
-}
-
-static bool addAnglePlatformAttributes(egl_connection_t* const cnx,
-                                       std::vector<EGLAttrib>& attrs) {
-    intptr_t vendorEGL = (intptr_t)cnx->vendorEGL;
-
-    attrs.reserve(4 * 2);
-
-    attrs.push_back(EGL_PLATFORM_ANGLE_TYPE_ANGLE);
-    attrs.push_back(cnx->angleBackend);
-
-    switch (cnx->angleBackend) {
-        case EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE:
-            ALOGV("%s: Requesting Vulkan ANGLE back-end", __FUNCTION__);
-            char prop[PROPERTY_VALUE_MAX];
-            property_get("debug.angle.validation", prop, "0");
-            attrs.push_back(EGL_PLATFORM_ANGLE_DEBUG_LAYERS_ENABLED_ANGLE);
-            attrs.push_back(atoi(prop));
-            break;
-        case EGL_PLATFORM_ANGLE_TYPE_DEFAULT_ANGLE:
-            ALOGV("%s: Requesting Default ANGLE back-end", __FUNCTION__);
-            break;
-        case EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE:
-            ALOGV("%s: Requesting OpenGL ES ANGLE back-end", __FUNCTION__);
-            // NOTE: This is only valid if the backend is OpenGL
-            attrs.push_back(EGL_PLATFORM_ANGLE_EGL_HANDLE_ANGLE);
-            attrs.push_back(vendorEGL);
-            break;
-        default:
-            ALOGV("%s: Requesting Unknown (%d) ANGLE back-end", __FUNCTION__, cnx->angleBackend);
-            break;
-    }
-    attrs.push_back(EGL_PLATFORM_ANGLE_CONTEXT_VIRTUALIZATION_ANGLE);
-    attrs.push_back(EGL_FALSE);
-
-    return true;
-}
-
-// Initialize function ptrs for ANGLE PlatformMethods struct, used for systrace
-bool initializeAnglePlatform(EGLDisplay dpy) {
-    // Since we're inside libEGL, use dlsym to lookup fptr for ANGLEGetDisplayPlatform
-    android_namespace_t* ns = android::GraphicsEnv::getInstance().getAngleNamespace();
-    const android_dlextinfo dlextinfo = {
-            .flags = ANDROID_DLEXT_USE_NAMESPACE,
-            .library_namespace = ns,
-    };
-    void* so = android_dlopen_ext("libEGL_angle.so", RTLD_LOCAL | RTLD_NOW, &dlextinfo);
-    angle::AnglePlatformImpl::angleGetDisplayPlatform =
-            reinterpret_cast<angle::GetDisplayPlatformFunc>(dlsym(so, "ANGLEGetDisplayPlatform"));
-
-    if (!angle::AnglePlatformImpl::angleGetDisplayPlatform) {
-        ALOGE("dlsym lookup of ANGLEGetDisplayPlatform in libEGL_angle failed!");
-        return false;
-    }
-
-    angle::AnglePlatformImpl::angleResetDisplayPlatform =
-            reinterpret_cast<angle::ResetDisplayPlatformFunc>(
-                    eglGetProcAddress("ANGLEResetDisplayPlatform"));
-
-    angle::PlatformMethods* platformMethods = nullptr;
-    if (!((angle::AnglePlatformImpl::angleGetDisplayPlatform)(dpy, angle::g_PlatformMethodNames,
-                                                              angle::g_NumPlatformMethods, nullptr,
-                                                              &platformMethods))) {
-        ALOGE("ANGLEGetDisplayPlatform call failed!");
-        return false;
-    }
-    if (platformMethods) {
-        angle::AnglePlatformImpl::assignAnglePlatformMethods(platformMethods);
-    } else {
-        ALOGE("In initializeAnglePlatform() platformMethods struct ptr is NULL. Not assigning "
-              "tracing function ptrs!");
-    }
-    return true;
+    return getPlatformDisplay(disp, attrib_list);
 }
 
 static EGLDisplay getPlatformDisplayAngle(EGLNativeDisplayType display, egl_connection_t* const cnx,
@@ -214,12 +143,23 @@ static EGLDisplay getPlatformDisplayAngle(EGLNativeDisplayType display, egl_conn
                 attrs.push_back(attr[1]);
             }
         }
-
-        if (!addAnglePlatformAttributes(cnx, attrs)) {
-            ALOGE("eglGetDisplay(%p) failed: Mismatch display request", display);
-            *error = EGL_BAD_PARAMETER;
-            return EGL_NO_DISPLAY;
+        const auto& eglFeatures = GraphicsEnv::getInstance().getAngleEglFeatures();
+        std::vector<const char*> features;
+        if (eglFeatures.size() > 0) {
+            for (const std::string& eglFeature : eglFeatures) {
+                features.push_back(eglFeature.c_str());
+            }
+            features.push_back(0);
+            attrs.push_back(EGL_FEATURE_OVERRIDES_ENABLED_ANGLE);
+            attrs.push_back(reinterpret_cast<EGLAttrib>(features.data()));
         }
+
+        attrs.push_back(EGL_PLATFORM_ANGLE_TYPE_ANGLE);
+        attrs.push_back(EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE);
+
+        attrs.push_back(EGL_PLATFORM_ANGLE_DEBUG_LAYERS_ENABLED_ANGLE);
+        attrs.push_back(base::GetBoolProperty("debug.angle.validation", false));
+
         attrs.push_back(EGL_NONE);
 
         dpy = cnx->egl.eglGetPlatformDisplay(EGL_PLATFORM_ANGLE_ANGLE,
@@ -228,7 +168,7 @@ static EGLDisplay getPlatformDisplayAngle(EGLNativeDisplayType display, egl_conn
         if (dpy == EGL_NO_DISPLAY) {
             ALOGE("eglGetPlatformDisplay failed!");
         } else {
-            if (!initializeAnglePlatform(dpy)) {
+            if (!angle::initializeAnglePlatform(dpy)) {
                 ALOGE("initializeAnglePlatform failed!");
             }
         }
@@ -242,17 +182,16 @@ static EGLDisplay getPlatformDisplayAngle(EGLNativeDisplayType display, egl_conn
 
 EGLDisplay egl_display_t::getPlatformDisplay(EGLNativeDisplayType display,
                                              const EGLAttrib* attrib_list) {
-    std::lock_guard<std::mutex> _l(lock);
     ATRACE_CALL();
 
     // get our driver loader
     Loader& loader(Loader::getInstance());
 
     egl_connection_t* const cnx = &gEGLImpl;
-    if (cnx->dso && disp.dpy == EGL_NO_DISPLAY) {
+    if (cnx->dso) {
         EGLDisplay dpy = EGL_NO_DISPLAY;
 
-        if (cnx->useAngle) {
+        if (cnx->angleLoaded) {
             EGLint error;
             dpy = getPlatformDisplayAngle(display, cnx, attrib_list, &error);
             if (error != EGL_NONE) {
@@ -270,7 +209,7 @@ EGLDisplay egl_display_t::getPlatformDisplay(EGLNativeDisplayType display,
             // It is possible that eglGetPlatformDisplay does not have a
             // working implementation for Android platform; in that case,
             // one last fallback to eglGetDisplay
-            if(dpy == EGL_NO_DISPLAY) {
+            if (dpy == EGL_NO_DISPLAY) {
                 if (attrib_list) {
                     ALOGW("getPlatformDisplay: unexpected attribute list, attributes ignored");
                 }
@@ -278,17 +217,23 @@ EGLDisplay egl_display_t::getPlatformDisplay(EGLNativeDisplayType display,
             }
         }
 
-        disp.dpy = dpy;
         if (dpy == EGL_NO_DISPLAY) {
             loader.close(cnx);
+        } else {
+            const std::lock_guard<std::mutex> lock(displayMapLock);
+            if (displayMap.find(dpy) == displayMap.end()) {
+                auto d = std::make_unique<egl_display_t>();
+                d->disp.dpy = dpy;
+                displayMap[dpy] = std::move(d);
+            }
+            return dpy;
         }
     }
 
-    return EGLDisplay(uintptr_t(display) + 1U);
+    return nullptr;
 }
 
-EGLBoolean egl_display_t::initialize(EGLint *major, EGLint *minor) {
-
+EGLBoolean egl_display_t::initialize(EGLint* major, EGLint* minor) {
     { // scope for refLock
         std::unique_lock<std::mutex> _l(refLock);
         refs++;
@@ -296,7 +241,7 @@ EGLBoolean egl_display_t::initialize(EGLint *major, EGLint *minor) {
             // We don't know what to report until we know what the
             // driver supports. Make sure we are initialized before
             // returning the version info.
-            while(!eglIsInitialized) {
+            while (!eglIsInitialized) {
                 refCond.wait(_l);
             }
             egl_connection_t* const cnx = &gEGLImpl;
@@ -309,7 +254,7 @@ EGLBoolean egl_display_t::initialize(EGLint *major, EGLint *minor) {
             if (minor != nullptr) *minor = cnx->minor;
             return EGL_TRUE;
         }
-        while(eglIsInitialized) {
+        while (eglIsInitialized) {
             refCond.wait(_l);
         }
     }
@@ -329,25 +274,34 @@ EGLBoolean egl_display_t::initialize(EGLint *major, EGLint *minor) {
         if (cnx->dso) {
             EGLDisplay idpy = disp.dpy;
             if (cnx->egl.eglInitialize(idpy, &cnx->major, &cnx->minor)) {
-                //ALOGD("initialized dpy=%p, ver=%d.%d, cnx=%p",
+                // ALOGD("initialized dpy=%p, ver=%d.%d, cnx=%p",
                 //        idpy, cnx->major, cnx->minor, cnx);
 
                 // display is now initialized
                 disp.state = egl_display_t::INITIALIZED;
 
                 // get the query-strings for this display for each implementation
-                disp.queryString.vendor = cnx->egl.eglQueryString(idpy,
-                        EGL_VENDOR);
-                disp.queryString.version = cnx->egl.eglQueryString(idpy,
-                        EGL_VERSION);
-                disp.queryString.extensions = cnx->egl.eglQueryString(idpy,
-                        EGL_EXTENSIONS);
-                disp.queryString.clientApi = cnx->egl.eglQueryString(idpy,
-                        EGL_CLIENT_APIS);
+                disp.queryString.vendor = cnx->egl.eglQueryString(idpy, EGL_VENDOR);
+                disp.queryString.version = cnx->egl.eglQueryString(idpy, EGL_VERSION);
+                disp.queryString.extensions = cnx->egl.eglQueryString(idpy, EGL_EXTENSIONS);
+                disp.queryString.clientApi = cnx->egl.eglQueryString(idpy, EGL_CLIENT_APIS);
 
             } else {
                 ALOGW("eglInitialize(%p) failed (%s)", idpy,
-                        egl_tls_t::egl_strerror(cnx->egl.eglGetError()));
+                      egl_tls_t::egl_strerror(cnx->egl.eglGetError()));
+            }
+        }
+
+        if (cnx->minor == 5) {
+            // full list in egl_entries.in
+            if (!cnx->egl.eglCreateImage || !cnx->egl.eglDestroyImage ||
+                !cnx->egl.eglGetPlatformDisplay || !cnx->egl.eglCreatePlatformWindowSurface ||
+                !cnx->egl.eglCreatePlatformPixmapSurface || !cnx->egl.eglCreateSync ||
+                !cnx->egl.eglDestroySync || !cnx->egl.eglClientWaitSync ||
+                !cnx->egl.eglGetSyncAttrib || !cnx->egl.eglWaitSync) {
+                ALOGE("Driver indicates EGL 1.5 support, but does not have "
+                      "a critical API");
+                cnx->minor = 4;
             }
         }
 
@@ -355,45 +309,10 @@ EGLBoolean egl_display_t::initialize(EGLint *major, EGLint *minor) {
         mVendorString = sVendorString;
         mVersionString.clear();
         cnx->driverVersion = EGL_MAKE_VERSION(1, 4, 0);
+        mVersionString = sVersionString14;
         if ((cnx->major == 1) && (cnx->minor == 5)) {
             mVersionString = sVersionString15;
             cnx->driverVersion = EGL_MAKE_VERSION(1, 5, 0);
-        } else if ((cnx->major == 1) && (cnx->minor == 4)) {
-            mVersionString = sVersionString14;
-            // Extensions needed for an EGL 1.4 implementation to be
-            // able to support EGL 1.5 functionality
-            std::vector<const char*> egl15extensions = {
-                    "EGL_EXT_client_extensions",
-                    // "EGL_EXT_platform_base",  // implemented by EGL runtime
-                    "EGL_KHR_image_base",
-                    "EGL_KHR_fence_sync",
-                    "EGL_KHR_wait_sync",
-                    "EGL_KHR_create_context",
-                    "EGL_EXT_create_context_robustness",
-                    "EGL_KHR_gl_colorspace",
-                    "EGL_ANDROID_native_fence_sync",
-            };
-            bool extensionsFound = true;
-            for (const auto& name : egl15extensions) {
-                extensionsFound &= findExtension(disp.queryString.extensions, name);
-                ALOGV("Extension %s: %s", name,
-                      findExtension(disp.queryString.extensions, name) ? "Found" : "Missing");
-            }
-            // NOTE: From the spec:
-            // Creation of fence sync objects requires support from the bound
-            // client API, and will not succeed unless the client API satisfies:
-            // client API is OpenGL ES, and either the OpenGL ES version is 3.0
-            // or greater, or the GL_OES_EGL_sync extension is supported.
-            // We don't have a way to check the GL_EXTENSIONS string at this
-            // point in the code, assume that GL_OES_EGL_sync is supported
-            // because EGL_KHR_fence_sync is supported (as verified above).
-            if (extensionsFound) {
-                // Have everything needed to emulate EGL 1.5 so report EGL 1.5
-                // to the application.
-                mVersionString = sVersionString15;
-                cnx->major = 1;
-                cnx->minor = 5;
-            }
         }
         if (mVersionString.empty()) {
             ALOGW("Unexpected driver version: %d.%d, want 1.4 or 1.5", cnx->major, cnx->minor);
@@ -403,31 +322,40 @@ EGLBoolean egl_display_t::initialize(EGLint *major, EGLint *minor) {
 
         mExtensionString = gBuiltinExtensionString;
 
+        // b/269060366 Conditionally enabled EGL_ANDROID_get_frame_timestamps extension if the
+        // device's present timestamps are reliable (which may not be the case on emulators).
+        if (cnx->angleLoaded) {
+            if (android::base::GetBoolProperty("service.sf.present_timestamp", false)) {
+                mExtensionString.append("EGL_ANDROID_get_frame_timestamps ");
+            }
+        } else {
+            mExtensionString.append("EGL_ANDROID_get_frame_timestamps ");
+        }
+
         hasColorSpaceSupport = findExtension(disp.queryString.extensions, "EGL_KHR_gl_colorspace");
 
         // Note: CDD requires that devices supporting wide color and/or HDR color also support
         // the EGL_KHR_gl_colorspace extension.
-        bool wideColorBoardConfig =
-                getBool<ISurfaceFlingerConfigs, &ISurfaceFlingerConfigs::hasWideColorDisplay>(
-                        false);
+        bool wideColorBoardConfig = android::sysprop::has_wide_color_display(false);
 
         // Add wide-color extensions if device can support wide-color
         if (wideColorBoardConfig && hasColorSpaceSupport) {
             mExtensionString.append(
                     "EGL_EXT_gl_colorspace_scrgb EGL_EXT_gl_colorspace_scrgb_linear "
-                    "EGL_EXT_gl_colorspace_display_p3_linear EGL_EXT_gl_colorspace_display_p3 ");
+                    "EGL_EXT_gl_colorspace_display_p3_linear EGL_EXT_gl_colorspace_display_p3 "
+                    "EGL_EXT_gl_colorspace_display_p3_passthrough ");
         }
 
-        bool hasHdrBoardConfig =
-                getBool<ISurfaceFlingerConfigs, &ISurfaceFlingerConfigs::hasHDRDisplay>(false);
+        bool hasHdrBoardConfig = android::sysprop::has_HDR_display(false);
 
         if (hasHdrBoardConfig && hasColorSpaceSupport) {
             // hasHDRBoardConfig indicates the system is capable of supporting HDR content.
             // Typically that means there is an HDR capable display attached, but could be
             // support for attaching an HDR display. In either case, advertise support for
             // HDR color spaces.
-            mExtensionString.append(
-                    "EGL_EXT_gl_colorspace_bt2020_linear EGL_EXT_gl_colorspace_bt2020_pq ");
+            mExtensionString.append("EGL_EXT_gl_colorspace_bt2020_hlg "
+                                    "EGL_EXT_gl_colorspace_bt2020_linear "
+                                    "EGL_EXT_gl_colorspace_bt2020_pq ");
         }
 
         char const* start = gExtensionString;
@@ -437,6 +365,14 @@ EGLBoolean egl_display_t::initialize(EGLint *major, EGLint *minor) {
             if (len) {
                 // NOTE: we could avoid the copy if we had strnstr.
                 const std::string ext(start, len);
+                // Mitigation for Android P vendor partitions: Adreno 530 driver shipped on
+                // some Android P vendor partitions this extension under the draft KHR name,
+                // but during Khronos review it was decided to demote it to EXT.
+                if (needsAndroidPEglMitigation() && ext == "EGL_EXT_image_gl_colorspace" &&
+                    findExtension(disp.queryString.extensions, "EGL_KHR_image_gl_colorspace")) {
+                    mExtensionString.append("EGL_EXT_image_gl_colorspace ");
+                }
+
                 if (findExtension(disp.queryString.extensions, ext.c_str(), len)) {
                     mExtensionString.append(ext + " ");
                 }
@@ -448,16 +384,8 @@ EGLBoolean egl_display_t::initialize(EGLint *major, EGLint *minor) {
 
         egl_cache_t::get()->initialize(this);
 
-        char value[PROPERTY_VALUE_MAX];
-        property_get("debug.egl.finish", value, "0");
-        if (atoi(value)) {
-            finishOnSwap = true;
-        }
-
-        property_get("debug.egl.traceGpuCompletion", value, "0");
-        if (atoi(value)) {
-            traceGpuCompletion = true;
-        }
+        finishOnSwap = base::GetBoolProperty("debug.egl.finish", false);
+        traceGpuCompletion = base::GetBoolProperty("debug.egl.traceGpuCompletion", false);
 
         // TODO: If device doesn't provide 1.4 or 1.5 then we'll be
         // changing the behavior from the past where we always advertise
@@ -477,7 +405,6 @@ EGLBoolean egl_display_t::initialize(EGLint *major, EGLint *minor) {
 }
 
 EGLBoolean egl_display_t::terminate() {
-
     { // scope for refLock
         std::unique_lock<std::mutex> _rl(refLock);
         if (refs == 0) {
@@ -505,12 +432,12 @@ EGLBoolean egl_display_t::terminate() {
         egl_connection_t* const cnx = &gEGLImpl;
         if (cnx->dso && disp.state == egl_display_t::INITIALIZED) {
             // If we're using ANGLE reset any custom DisplayPlatform
-            if (cnx->useAngle && angle::AnglePlatformImpl::angleResetDisplayPlatform) {
-                (angle::AnglePlatformImpl::angleResetDisplayPlatform)(disp.dpy);
+            if (cnx->angleLoaded) {
+                angle::resetAnglePlatform(disp.dpy);
             }
             if (cnx->egl.eglTerminate(disp.dpy) == EGL_FALSE) {
                 ALOGW("eglTerminate(%p) failed (%s)", disp.dpy,
-                        egl_tls_t::egl_strerror(cnx->egl.eglGetError()));
+                      egl_tls_t::egl_strerror(cnx->egl.eglGetError()));
             }
             // REVISIT: it's unclear what to do if eglTerminate() fails
             disp.state = egl_display_t::TERMINATED;
@@ -543,8 +470,7 @@ EGLBoolean egl_display_t::terminate() {
     return res;
 }
 
-void egl_display_t::loseCurrent(egl_context_t * cur_c)
-{
+void egl_display_t::loseCurrent(egl_context_t* cur_c) {
     if (cur_c) {
         egl_display_t* display = cur_c->getDisplay();
         if (display) {
@@ -553,8 +479,7 @@ void egl_display_t::loseCurrent(egl_context_t * cur_c)
     }
 }
 
-void egl_display_t::loseCurrentImpl(egl_context_t * cur_c)
-{
+void egl_display_t::loseCurrentImpl(egl_context_t* cur_c) {
     // by construction, these are either 0 or valid (possibly terminated)
     // it should be impossible for these to be invalid
     ContextRef _cur_c(cur_c);
@@ -564,7 +489,6 @@ void egl_display_t::loseCurrentImpl(egl_context_t * cur_c)
     { // scope for the lock
         std::lock_guard<std::mutex> _l(lock);
         cur_c->onLooseCurrent();
-
     }
 
     // This cannot be called with the lock held because it might end-up
@@ -575,10 +499,9 @@ void egl_display_t::loseCurrentImpl(egl_context_t * cur_c)
     _cur_d.release();
 }
 
-EGLBoolean egl_display_t::makeCurrent(egl_context_t* c, egl_context_t* cur_c,
-        EGLSurface draw, EGLSurface read, EGLContext /*ctx*/,
-        EGLSurface impl_draw, EGLSurface impl_read, EGLContext impl_ctx)
-{
+EGLBoolean egl_display_t::makeCurrent(egl_context_t* c, egl_context_t* cur_c, EGLSurface draw,
+                                      EGLSurface read, EGLContext /*ctx*/, EGLSurface impl_draw,
+                                      EGLSurface impl_read, EGLContext impl_ctx) {
     EGLBoolean result;
 
     // by construction, these are either 0 or valid (possibly terminated)
@@ -590,14 +513,12 @@ EGLBoolean egl_display_t::makeCurrent(egl_context_t* c, egl_context_t* cur_c,
     { // scope for the lock
         std::lock_guard<std::mutex> _l(lock);
         if (c) {
-            result = c->cnx->egl.eglMakeCurrent(
-                    disp.dpy, impl_draw, impl_read, impl_ctx);
+            result = c->cnx->egl.eglMakeCurrent(disp.dpy, impl_draw, impl_read, impl_ctx);
             if (result == EGL_TRUE) {
                 c->onMakeCurrent(draw, read);
             }
         } else {
-            result = cur_c->cnx->egl.eglMakeCurrent(
-                    disp.dpy, impl_draw, impl_read, impl_ctx);
+            result = cur_c->cnx->egl.eglMakeCurrent(disp.dpy, impl_draw, impl_read, impl_ctx);
             if (result == EGL_TRUE) {
                 cur_c->onLooseCurrent();
             }
@@ -623,6 +544,23 @@ bool egl_display_t::haveExtension(const char* name, size_t nameLen) const {
     return findExtension(mExtensionString.c_str(), name, nameLen);
 }
 
-// ----------------------------------------------------------------------------
+egl_display_t* validate_display(EGLDisplay dpy) {
+    egl_display_t* const dp = get_display(dpy);
+    if (!dp) return setError(EGL_BAD_DISPLAY, (egl_display_t*)nullptr);
+    if (!dp->isReady()) return setError(EGL_NOT_INITIALIZED, (egl_display_t*)nullptr);
+
+    return dp;
+}
+
+egl_display_t* validate_display_connection(EGLDisplay dpy, egl_connection_t** outCnx) {
+    *outCnx = nullptr;
+    egl_display_t* dp = validate_display(dpy);
+    if (!dp) return dp;
+    *outCnx = &gEGLImpl;
+    if ((*outCnx)->dso == nullptr) {
+        return setError(EGL_BAD_CONFIG, (egl_display_t*)nullptr);
+    }
+    return dp;
+}
+
 }; // namespace android
-// ----------------------------------------------------------------------------

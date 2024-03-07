@@ -68,7 +68,8 @@ bool DropRootUser() {
     }
 
     static const std::vector<std::string> group_names{
-        "log", "sdcard_r", "sdcard_rw", "mount", "inet", "net_bw_stats", "readproc", "bluetooth"};
+        "log", "sdcard_r", "sdcard_rw", "mount", "inet", "net_bw_stats",
+            "readproc", "bluetooth", "wakelock", "nfc"};
     std::vector<gid_t> groups(group_names.size(), 0);
     for (size_t i = 0; i < group_names.size(); ++i) {
         grp = getgrnam(group_names[i].c_str());
@@ -116,6 +117,11 @@ bool DropRootUser() {
         capdata[cap_syslog_index].effective |= cap_syslog_mask;
     }
 
+    const uint32_t cap_block_suspend_mask = CAP_TO_MASK(CAP_BLOCK_SUSPEND);
+    const uint32_t cap_block_suspend_index = CAP_TO_INDEX(CAP_BLOCK_SUSPEND);
+    capdata[cap_block_suspend_index].permitted |= cap_block_suspend_mask;
+    capdata[cap_block_suspend_index].effective |= cap_block_suspend_mask;
+
     if (capset(&capheader, &capdata[0]) != 0) {
         MYLOGE("capset({%#x, %#x}) failed: %s\n", capdata[0].effective,
                capdata[1].effective, strerror(errno));
@@ -156,17 +162,16 @@ int DumpFileFromFdToFd(const std::string& title, const std::string& path_string,
         return 0;
     }
     bool newline = false;
+    int poll_timeout_ms = 30 * 1000;
     while (true) {
-        uint64_t start_time = Nanotime();
         pollfd fds[] = { { .fd = fd, .events = POLLIN } };
-        int ret = TEMP_FAILURE_RETRY(poll(fds, arraysize(fds), 30 * 1000));
+        int ret = TEMP_FAILURE_RETRY(poll(fds, arraysize(fds), poll_timeout_ms));
         if (ret == -1) {
             dprintf(out_fd, "*** %s: poll failed: %s\n", path, strerror(errno));
             newline = true;
             break;
-        } else if (ret == 0) {
-            uint64_t elapsed = Nanotime() - start_time;
-            dprintf(out_fd, "*** %s: Timed out after %.3fs\n", path, (float)elapsed / NANOS_PER_SEC);
+        } else if (ret == 0 && poll_timeout_ms != 0) {
+            dprintf(out_fd, "*** %s: Timed out after %ds\n", path, poll_timeout_ms / 1000 );
             newline = true;
             break;
         } else {
@@ -183,6 +188,7 @@ int DumpFileFromFdToFd(const std::string& title, const std::string& path_string,
                 break;
             }
         }
+        poll_timeout_ms = 0;
     }
 
     if (!newline) dprintf(out_fd, "\n");

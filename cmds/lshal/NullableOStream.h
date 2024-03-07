@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef FRAMEWORK_NATIVE_CMDS_LSHAL_NULLABLE_O_STREAM_H_
-#define FRAMEWORK_NATIVE_CMDS_LSHAL_NULLABLE_O_STREAM_H_
+#pragma once
 
 #include <iostream>
 
@@ -25,8 +24,8 @@ namespace lshal {
 template<typename S>
 class NullableOStream {
 public:
-    NullableOStream(S &os) : mOs(&os) {}
-    NullableOStream(S *os) : mOs(os) {}
+    explicit NullableOStream(S &os) : mOs(&os) {}
+    explicit NullableOStream(S *os) : mOs(os) {}
     NullableOStream &operator=(S &os) {
         mOs = &os;
         return *this;
@@ -57,7 +56,7 @@ public:
     S& buf() const {
         return *mOs;
     }
-    operator bool() const {
+    operator bool() const { // NOLINT(google-explicit-constructor)
         return mOs != nullptr;
     }
 private:
@@ -69,5 +68,3 @@ private:
 
 }  // namespace lshal
 }  // namespace android
-
-#endif  // FRAMEWORK_NATIVE_CMDS_LSHAL_NULLABLE_O_STREAM_H_

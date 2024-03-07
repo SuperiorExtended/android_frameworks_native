@@ -21,8 +21,12 @@
 #include <sys/types.h>
 
 #include <string>
+#include <utility>
+#include <vector>
 
+#include <android/hardware_buffer.h>
 #include <ui/ANativeObjectBase.h>
+#include <ui/GraphicBufferMapper.h>
 #include <ui/PixelFormat.h>
 #include <ui/Rect.h>
 #include <utils/Flattenable.h>
@@ -35,6 +39,8 @@
 namespace android {
 
 class GraphicBufferMapper;
+
+using GraphicBufferDeathCallback = std::function<void(void* /*context*/, uint64_t bufferId)>;
 
 // ===========================================================================
 // GraphicBuffer
@@ -74,6 +80,10 @@ public:
 
     static sp<GraphicBuffer> from(ANativeWindowBuffer *);
 
+    static GraphicBuffer* fromAHardwareBuffer(AHardwareBuffer*);
+    static GraphicBuffer const* fromAHardwareBuffer(AHardwareBuffer const*);
+    AHardwareBuffer* toAHardwareBuffer();
+    AHardwareBuffer const* toAHardwareBuffer() const;
 
     // Create a GraphicBuffer to be unflatten'ed into or be reallocated.
     GraphicBuffer();
@@ -159,23 +169,34 @@ public:
     bool needsReallocation(uint32_t inWidth, uint32_t inHeight,
             PixelFormat inFormat, uint32_t inLayerCount, uint64_t inUsage);
 
-    status_t lock(uint32_t inUsage, void** vaddr);
-    status_t lock(uint32_t inUsage, const Rect& rect, void** vaddr);
+    // For the following two lock functions, if bytesPerStride or bytesPerPixel
+    // are unknown or variable, -1 will be returned
+    status_t lock(uint32_t inUsage, void** vaddr, int32_t* outBytesPerPixel = nullptr,
+                  int32_t* outBytesPerStride = nullptr);
+    status_t lock(uint32_t inUsage, const Rect& rect, void** vaddr,
+                  int32_t* outBytesPerPixel = nullptr, int32_t* outBytesPerStride = nullptr);
     // For HAL_PIXEL_FORMAT_YCbCr_420_888
     status_t lockYCbCr(uint32_t inUsage, android_ycbcr *ycbcr);
     status_t lockYCbCr(uint32_t inUsage, const Rect& rect,
             android_ycbcr *ycbcr);
     status_t unlock();
-    status_t lockAsync(uint32_t inUsage, void** vaddr, int fenceFd);
-    status_t lockAsync(uint32_t inUsage, const Rect& rect, void** vaddr,
-            int fenceFd);
-    status_t lockAsync(uint64_t inProducerUsage, uint64_t inConsumerUsage,
-            const Rect& rect, void** vaddr, int fenceFd);
+    // For the following three lockAsync functions, if bytesPerStride or bytesPerPixel
+    // are unknown or variable, -1 will be returned
+    status_t lockAsync(uint32_t inUsage, void** vaddr, int fenceFd,
+                       int32_t* outBytesPerPixel = nullptr, int32_t* outBytesPerStride = nullptr);
+    status_t lockAsync(uint32_t inUsage, const Rect& rect, void** vaddr, int fenceFd,
+                       int32_t* outBytesPerPixel = nullptr, int32_t* outBytesPerStride = nullptr);
+    status_t lockAsync(uint64_t inProducerUsage, uint64_t inConsumerUsage, const Rect& rect,
+                       void** vaddr, int fenceFd, int32_t* outBytesPerPixel = nullptr,
+                       int32_t* outBytesPerStride = nullptr);
     status_t lockAsyncYCbCr(uint32_t inUsage, android_ycbcr *ycbcr,
             int fenceFd);
     status_t lockAsyncYCbCr(uint32_t inUsage, const Rect& rect,
             android_ycbcr *ycbcr, int fenceFd);
     status_t unlockAsync(int *fenceFd);
+
+    status_t isSupported(uint32_t inWidth, uint32_t inHeight, PixelFormat inFormat,
+                         uint32_t inLayerCount, uint64_t inUsage, bool* outSupported) const;
 
     ANativeWindowBuffer* getNativeBuffer() const;
 
@@ -187,6 +208,12 @@ public:
     size_t getFdCount() const;
     status_t flatten(void*& buffer, size_t& size, int*& fds, size_t& count) const;
     status_t unflatten(void const*& buffer, size_t& size, int const*& fds, size_t& count);
+
+    GraphicBufferMapper::Version getBufferMapperVersion() const {
+        return mBufferMapper.getMapperVersion();
+    }
+
+    void addDeathCallback(GraphicBufferDeathCallback deathCallback, void* context);
 
 private:
     ~GraphicBuffer();
@@ -233,10 +260,27 @@ private:
 
     uint64_t mId;
 
+    // Unused, but removing this may break GSI.
+    int32_t mBufferId = -1;
+
     // Stores the generation number of this buffer. If this number does not
     // match the BufferQueue's internal generation number (set through
     // IGBP::setGenerationNumber), attempts to attach the buffer will fail.
     uint32_t mGenerationNumber;
+
+    // Send a callback when a GraphicBuffer dies.
+    //
+    // This is used for layer caching. GraphicBuffers are refcounted per process. When
+    // A GraphicBuffer doesn't have any more sp<> in a process, it is destroyed. This causes
+    // problems when trying to implicitcly cache across process boundaries. Ideally, both sides
+    // of the cache would hold onto wp<> references. When an app dropped its sp<>, the GraphicBuffer
+    // would be destroyed. Unfortunately, when SurfaceFlinger has only a wp<> reference to the
+    // GraphicBuffer, it immediately goes out of scope in the SurfaceFlinger process. SurfaceFlinger
+    // must hold onto a sp<> to the buffer. When the GraphicBuffer goes out of scope in the app's
+    // process, the client side cache will get this callback. It erases the buffer from its cache
+    // and informs SurfaceFlinger that it should drop its strong pointer reference to the buffer.
+    std::vector<std::pair<GraphicBufferDeathCallback, void* /*mDeathCallbackContext*/>>
+            mDeathCallbacks;
 };
 
 }; // namespace android

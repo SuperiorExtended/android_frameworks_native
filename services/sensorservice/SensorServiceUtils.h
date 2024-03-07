@@ -21,16 +21,27 @@
 #include <string>
 
 namespace android {
+
+namespace util {
+class ProtoOutputStream;
+}
+
 namespace SensorServiceUtil {
 
 class Dumpable {
 public:
     virtual std::string dump() const = 0;
+    virtual void dump(util::ProtoOutputStream*) const {}
     virtual void setFormat(std::string ) {}
     virtual ~Dumpable() {}
 };
 
 size_t eventSizeBySensorType(int type);
+
+/**
+ * Returns true if on a user (production) build.
+ */
+bool isUserBuild();
 
 } // namespace SensorServiceUtil
 } // namespace android;

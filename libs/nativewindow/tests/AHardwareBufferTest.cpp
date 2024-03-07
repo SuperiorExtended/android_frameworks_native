@@ -17,11 +17,11 @@
 #define LOG_TAG "AHardwareBuffer_test"
 //#define LOG_NDEBUG 0
 
-#include <android/hardware_buffer.h>
-#include <private/android/AHardwareBufferHelpers.h>
 #include <android/hardware/graphics/common/1.0/types.h>
-
 #include <gtest/gtest.h>
+#include <private/android/AHardwareBufferHelpers.h>
+#include <ui/GraphicBuffer.h>
+#include <vndk/hardware_buffer.h>
 
 using namespace android;
 using android::hardware::graphics::common::V1_0::BufferUsage;
@@ -100,9 +100,73 @@ TEST(AHardwareBufferTest, ConvertToAndFromGrallocBits) {
             (uint64_t)BufferUsage::CPU_WRITE_RARELY,
             AHARDWAREBUFFER_USAGE_CPU_READ_RARELY | AHARDWAREBUFFER_USAGE_CPU_WRITE_RARELY));
 
-EXPECT_TRUE(TestUsageConversion(
+    EXPECT_TRUE(TestUsageConversion(
         (uint64_t)BufferUsage::GPU_RENDER_TARGET | (uint64_t)BufferUsage::GPU_TEXTURE |
-            1ull << 29 | 1ull << 57,
+        1ull << 29 | 1ull << 57,
         AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT | AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE |
         AHARDWAREBUFFER_USAGE_VENDOR_1 | AHARDWAREBUFFER_USAGE_VENDOR_13));
+}
+
+TEST(AHardwareBufferTest, GetCreateHandleTest) {
+    AHardwareBuffer_Desc desc{
+            .width = 64,
+            .height = 1,
+            .layers = 1,
+            .format = AHARDWAREBUFFER_FORMAT_BLOB,
+            .usage = AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN | AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN,
+            .stride = 64,
+    };
+
+    AHardwareBuffer* buffer = nullptr;
+    EXPECT_EQ(0, AHardwareBuffer_allocate(&desc, &buffer));
+    const native_handle_t* handle = AHardwareBuffer_getNativeHandle(buffer);
+    EXPECT_NE(nullptr, handle);
+
+    AHardwareBuffer* otherBuffer = nullptr;
+    EXPECT_EQ(0, AHardwareBuffer_createFromHandle(
+        &desc, handle, AHARDWAREBUFFER_CREATE_FROM_HANDLE_METHOD_CLONE, &otherBuffer));
+    EXPECT_NE(nullptr, otherBuffer);
+
+    AHardwareBuffer_release(buffer);
+    AHardwareBuffer_release(otherBuffer);
+}
+
+TEST(AHardwareBufferTest, GetIdTest) {
+    const uint32_t testWidth = 4;
+    const uint32_t testHeight = 4;
+    const uint32_t testLayers = 1;
+
+    AHardwareBuffer* ahb1 = nullptr;
+    uint64_t id1 = 0;
+    const AHardwareBuffer_Desc desc = {
+            .width = testWidth,
+            .height = testHeight,
+            .layers = testLayers,
+            .format = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM,
+            .usage = AHARDWAREBUFFER_USAGE_CPU_READ_RARELY,
+    };
+    int res = AHardwareBuffer_allocate(&desc, &ahb1);
+    EXPECT_EQ(NO_ERROR, res);
+    EXPECT_NE(nullptr, ahb1);
+    EXPECT_EQ(0, AHardwareBuffer_getId(ahb1, &id1));
+    const GraphicBuffer* gb1 = AHardwareBuffer_to_GraphicBuffer(ahb1);
+    EXPECT_NE(nullptr, gb1);
+    EXPECT_EQ(id1, gb1->getId());
+    EXPECT_NE(id1, 0);
+
+    sp<GraphicBuffer> gb2(new GraphicBuffer(testWidth,
+                                            testHeight,
+                                            PIXEL_FORMAT_RGBA_8888,
+                                            testLayers,
+                                            GraphicBuffer::USAGE_SW_READ_RARELY,
+                                            std::string("test")));
+    EXPECT_NE(nullptr, gb2.get());
+    const AHardwareBuffer* ahb2 = AHardwareBuffer_from_GraphicBuffer(gb2.get());
+    EXPECT_NE(nullptr, ahb2);
+    uint64_t id2 = 0;
+    EXPECT_EQ(0, AHardwareBuffer_getId(ahb2, &id2));
+    EXPECT_EQ(id2, gb2->getId());
+    EXPECT_NE(id2, 0);
+
+    EXPECT_NE(id1, id2);
 }

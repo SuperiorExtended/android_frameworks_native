@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wconversion"
+
 #include <gtest/gtest.h>
 
 #include <gui/SurfaceComposerClient.h>
@@ -28,13 +32,13 @@ namespace android {
 
 TEST(SurfaceFlingerStress, create_and_destroy) {
     auto do_stress = []() {
-        sp<SurfaceComposerClient> client = new SurfaceComposerClient;
+        sp<SurfaceComposerClient> client = sp<SurfaceComposerClient>::make();
         ASSERT_EQ(NO_ERROR, client->initCheck());
         for (int j = 0; j < 1000; j++) {
             auto surf = client->createSurface(String8("t"), 100, 100,
                     PIXEL_FORMAT_RGBA_8888, 0);
             ASSERT_TRUE(surf != nullptr);
-            client->destroySurface(surf->getHandle());
+            surf.clear();
         }
     };
 
@@ -107,3 +111,6 @@ TEST(LayerProtoStress, mem_info) {
 }
 
 }
+
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic pop // ignored "-Wconversion"

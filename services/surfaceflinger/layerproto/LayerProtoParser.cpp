@@ -37,16 +37,6 @@ bool sortLayers(LayerProtoParser::Layer* lhs, const LayerProtoParser::Layer* rhs
     return lhs->id < rhs->id;
 }
 
-const LayerProtoParser::LayerGlobal LayerProtoParser::generateLayerGlobalInfo(
-        const LayersProto& layersProto) {
-    LayerGlobal layerGlobal;
-    layerGlobal.resolution = {layersProto.resolution().w(), layersProto.resolution().h()};
-    layerGlobal.colorMode = layersProto.color_mode();
-    layerGlobal.colorTransform = layersProto.color_transform();
-    layerGlobal.globalTransform = layersProto.global_transform();
-    return layerGlobal;
-}
-
 LayerProtoParser::LayerTree LayerProtoParser::generateLayerTree(const LayersProto& layersProto) {
     LayerTree layerTree;
     layerTree.allLayers = generateLayerList(layersProto);
@@ -114,20 +104,24 @@ LayerProtoParser::Layer LayerProtoParser::generateLayer(const LayerProto& layerP
     layer.bufferTransform = generateTransform(layerProto.buffer_transform());
     layer.queuedFrames = layerProto.queued_frames();
     layer.refreshPending = layerProto.refresh_pending();
-    layer.hwcFrame = generateRect(layerProto.hwc_frame());
-    layer.hwcCrop = generateFloatRect(layerProto.hwc_crop());
-    layer.hwcTransform = layerProto.hwc_transform();
-    layer.windowType = layerProto.window_type();
-    layer.appId = layerProto.app_id();
-    layer.hwcCompositionType = layerProto.hwc_composition_type();
     layer.isProtected = layerProto.is_protected();
-
+    layer.isTrustedOverlay = layerProto.is_trusted_overlay();
+    layer.cornerRadius = layerProto.corner_radius();
+    layer.backgroundBlurRadius = layerProto.background_blur_radius();
+    for (const auto& entry : layerProto.metadata()) {
+        const std::string& dataStr = entry.second;
+        std::vector<uint8_t>& outData = layer.metadata.mMap[entry.first];
+        outData.resize(dataStr.size());
+        memcpy(outData.data(), dataStr.data(), dataStr.size());
+    }
+    layer.cornerRadiusCrop = generateFloatRect(layerProto.corner_radius_crop());
+    layer.shadowRadius = layerProto.shadow_radius();
+    layer.ownerUid = layerProto.owner_uid();
     return layer;
 }
 
 LayerProtoParser::Region LayerProtoParser::generateRegion(const RegionProto& regionProto) {
     LayerProtoParser::Region region;
-    region.id = regionProto.id();
     for (int i = 0; i < regionProto.rect_size(); i++) {
         const RectProto& rectProto = regionProto.rect(i);
         region.rects.push_back(generateRect(rectProto));
@@ -194,13 +188,13 @@ void LayerProtoParser::updateChildrenAndRelative(const LayerProto& layerProto,
         }
     }
 
-    if (layerProto.has_parent()) {
+    if (layerProto.parent() != -1) {
         if (layerMap.count(layerProto.parent()) > 0) {
             currLayer->parent = layerMap[layerProto.parent()];
         }
     }
 
-    if (layerProto.has_z_order_relative_of()) {
+    if (layerProto.z_order_relative_of() != -1) {
         if (layerMap.count(layerProto.z_order_relative_of()) > 0) {
             currLayer->zOrderRelativeOf = layerMap[layerProto.z_order_relative_of()];
         }
@@ -284,7 +278,7 @@ std::string LayerProtoParser::Region::to_string(const char* what) const {
 
 std::string LayerProtoParser::Layer::to_string() const {
     std::string result;
-    StringAppendF(&result, "+ %s (%s)\n", type.c_str(), name.c_str());
+    StringAppendF(&result, "+ %s (%s) uid=%d\n", type.c_str(), name.c_str(), ownerUid);
     result.append(transparentRegion.to_string("TransparentRegion").c_str());
     result.append(visibleRegion.to_string("VisibleRegion").c_str());
     result.append(damageRegion.to_string("SurfaceDamageRegion").c_str());
@@ -294,9 +288,13 @@ std::string LayerProtoParser::Layer::to_string() const {
                   size.y);
 
     StringAppendF(&result, "crop=%s, ", crop.to_string().c_str());
+    StringAppendF(&result, "cornerRadius=%f, ", cornerRadius);
+    StringAppendF(&result, "isProtected=%1d, ", isProtected);
+    StringAppendF(&result, "isTrustedOverlay=%1d, ", isTrustedOverlay);
     StringAppendF(&result, "isOpaque=%1d, invalidate=%1d, ", isOpaque, invalidate);
     StringAppendF(&result, "dataspace=%s, ", dataspace.c_str());
     StringAppendF(&result, "defaultPixelFormat=%s, ", pixelFormat.c_str());
+    StringAppendF(&result, "backgroundBlurRadius=%1d, ", backgroundBlurRadius);
     StringAppendF(&result, "color=(%.3f,%.3f,%.3f,%.3f), flags=0x%08x, ",
                   static_cast<double>(color.r), static_cast<double>(color.g),
                   static_cast<double>(color.b), static_cast<double>(color.a), flags);
@@ -307,9 +305,17 @@ std::string LayerProtoParser::Layer::to_string() const {
                   zOrderRelativeOf == nullptr ? "none" : zOrderRelativeOf->name.c_str());
     StringAppendF(&result, "      activeBuffer=%s,", activeBuffer.to_string().c_str());
     StringAppendF(&result, " tr=%s", bufferTransform.to_string().c_str());
-    StringAppendF(&result, " queued-frames=%d, mRefreshPending=%d,", queuedFrames, refreshPending);
-    StringAppendF(&result, " windowType=%d, appId=%d", windowType, appId);
-
+    StringAppendF(&result, " queued-frames=%d", queuedFrames);
+    StringAppendF(&result, " metadata={");
+    bool first = true;
+    for (const auto& entry : metadata.mMap) {
+        if (!first) result.append(", ");
+        first = false;
+        result.append(metadata.itemToString(entry.first, ":"));
+    }
+    result.append("},");
+    StringAppendF(&result, " cornerRadiusCrop=%s, ", cornerRadiusCrop.to_string().c_str());
+    StringAppendF(&result, " shadowRadius=%.3f, ", shadowRadius);
     return result;
 }
 

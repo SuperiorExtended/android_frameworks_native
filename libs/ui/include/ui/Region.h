@@ -19,20 +19,21 @@
 
 #include <stdint.h>
 #include <sys/types.h>
+#include <ostream>
 
-#include <utils/Vector.h>
-
+#include <math/HashCombine.h>
 #include <ui/Rect.h>
 #include <utils/Flattenable.h>
 
 #include <android-base/macros.h>
 
+#include "FatVector.h"
+
+#include <string>
+
 namespace android {
 // ---------------------------------------------------------------------------
 
-class String8;
-
-// ---------------------------------------------------------------------------
 class Region : public LightFlattenable<Region>
 {
 public:
@@ -89,10 +90,12 @@ public:
 
             // these translate rhs first
             Region&     translateSelf(int dx, int dy);
+            Region&     scaleSelf(float sx, float sy);
             Region&     orSelf(const Region& rhs, int dx, int dy);
             Region&     xorSelf(const Region& rhs, int dx, int dy);
             Region&     andSelf(const Region& rhs, int dx, int dy);
             Region&     subtractSelf(const Region& rhs, int dx, int dy);
+
 
             // these translate rhs first
     const   Region      translate(int dx, int dy) const WARN_UNUSED;
@@ -118,6 +121,8 @@ public:
     // returns true if the regions share the same underlying storage
     bool isTriviallyEqual(const Region& region) const;
 
+    // returns true if the regions consist of the same rectangle sequence
+    bool hasSameRects(const Region& region) const;
 
     /* various ways to access the rectangle list */
 
@@ -142,8 +147,8 @@ public:
             status_t    flatten(void* buffer, size_t size) const;
             status_t    unflatten(void const* buffer, size_t size);
 
-    void        dump(String8& out, const char* what, uint32_t flags=0) const;
-    void        dump(const char* what, uint32_t flags=0) const;
+            void        dump(std::string& out, const char* what, uint32_t flags=0) const;
+            void        dump(const char* what, uint32_t flags=0) const;
 
 private:
     class rasterizer;
@@ -176,7 +181,7 @@ private:
     // with an extra Rect as the last element which is set to the
     // bounds of the region. However, if the region is
     // a simple Rect then mStorage contains only that rect.
-    Vector<Rect> mStorage;
+    FatVector<Rect> mStorage;
 };
 
 
@@ -212,8 +217,35 @@ Region& Region::operator -= (const Region& rhs) {
 Region& Region::operator += (const Point& pt) {
     return translateSelf(pt.x, pt.y);
 }
+
+// Defining PrintTo helps with Google Tests.
+static inline void PrintTo(const Region& region, ::std::ostream* os) {
+    Region::const_iterator head = region.begin();
+    Region::const_iterator const tail = region.end();
+    bool first = true;
+    while (head != tail) {
+        *os << (first ? "Region(" : ", ");
+        PrintTo(*head, os);
+        head++;
+        first = false;
+    }
+    *os << ")";
+}
+
 // ---------------------------------------------------------------------------
 }; // namespace android
 
-#endif // ANDROID_UI_REGION_H
+namespace std {
+template <>
+struct hash<android::Region> {
+    size_t operator()(const android::Region& region) const {
+        size_t hash = 0;
+        for (const android::Rect& rect : region) {
+            android::hashCombineSingle(hash, rect);
+        }
+        return hash;
+    }
+};
+} // namespace std
 
+#endif // ANDROID_UI_REGION_H

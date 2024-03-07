@@ -17,23 +17,46 @@
 #ifndef ANDROID_GUI_SURFACE_H
 #define ANDROID_GUI_SURFACE_H
 
+#include <android/gui/FrameTimelineInfo.h>
 #include <gui/BufferQueueDefs.h>
 #include <gui/HdrMetadata.h>
 #include <gui/IGraphicBufferProducer.h>
-
+#include <gui/IProducerListener.h>
+#include <system/window.h>
 #include <ui/ANativeObjectBase.h>
 #include <ui/GraphicTypes.h>
 #include <ui/Region.h>
-
 #include <utils/Condition.h>
 #include <utils/Mutex.h>
 #include <utils/RefBase.h>
 
-#include <system/window.h>
+#include <shared_mutex>
+#include <unordered_set>
 
 namespace android {
 
+namespace gui {
 class ISurfaceComposer;
+} // namespace gui
+
+class ISurfaceComposer;
+
+using gui::FrameTimelineInfo;
+
+/* This is the same as ProducerListener except that onBuffersDiscarded is
+ * called with a vector of graphic buffers instead of buffer slots.
+ */
+class SurfaceListener : public virtual RefBase
+{
+public:
+    SurfaceListener() = default;
+    virtual ~SurfaceListener() = default;
+
+    virtual void onBufferReleased() = 0;
+    virtual bool needsReleaseNotify() = 0;
+
+    virtual void onBuffersDiscarded(const std::vector<sp<GraphicBuffer>>& buffers) = 0;
+};
 
 /*
  * An implementation of ANativeWindow that feeds graphics buffers into a
@@ -52,7 +75,6 @@ class Surface
     : public ANativeObjectBase<ANativeWindow, Surface, RefBase>
 {
 public:
-
     /*
      * creates a Surface from the given IGraphicBufferProducer (which concrete
      * implementation is a BufferQueue).
@@ -67,9 +89,15 @@ public:
      *
      * the controlledByApp flag indicates that this Surface (producer) is
      * controlled by the application. This flag is used at connect time.
+     *
+     * Pass in the SurfaceControlHandle to store a weak reference to the layer
+     * that the Surface was created from. This handle can be used to create a
+     * child surface without using the IGBP to identify the layer. This is used
+     * for surfaces created by the BlastBufferQueue whose IGBP is created on the
+     * client and cannot be verified in SF.
      */
-    explicit Surface(const sp<IGraphicBufferProducer>& bufferProducer,
-            bool controlledByApp = false);
+    explicit Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controlledByApp = false,
+                     const sp<IBinder>& surfaceControlHandle = nullptr);
 
     /* getIGraphicBufferProducer() returns the IGraphicBufferProducer this
      * Surface was created with. Usually it's an error to use the
@@ -77,10 +105,30 @@ public:
      */
     sp<IGraphicBufferProducer> getIGraphicBufferProducer() const;
 
+    sp<IBinder> getSurfaceControlHandle() const;
+
     /* convenience function to check that the given surface is non NULL as
      * well as its IGraphicBufferProducer */
     static bool isValid(const sp<Surface>& surface) {
         return surface != nullptr && surface->getIGraphicBufferProducer() != nullptr;
+    }
+
+    static sp<IGraphicBufferProducer> getIGraphicBufferProducer(ANativeWindow* window) {
+        int val;
+        if (window->query(window, NATIVE_WINDOW_CONCRETE_TYPE, &val) >= 0 &&
+            val == NATIVE_WINDOW_SURFACE) {
+            return ((Surface*) window)->mGraphicBufferProducer;
+        }
+        return nullptr;
+    }
+
+    static sp<IBinder> getSurfaceControlHandle(ANativeWindow* window) {
+        int val;
+        if (window->query(window, NATIVE_WINDOW_CONCRETE_TYPE, &val) >= 0 &&
+            val == NATIVE_WINDOW_SURFACE) {
+            return ((Surface*) window)->mSurfaceControlHandle;
+        }
+        return nullptr;
     }
 
     /* Attaches a sideband buffer stream to the Surface's IGraphicBufferProducer.
@@ -104,7 +152,7 @@ public:
      * delay during dequeueBuffer. If there are already the maximum number of
      * buffers allocated, this function has no effect.
      */
-    void allocateBuffers();
+    virtual void allocateBuffers();
 
     /* Sets the generation number on the IGraphicBufferProducer and updates the
      * generation number on any buffers attached to the Surface after this call.
@@ -157,20 +205,22 @@ public:
             nsecs_t* outDisplayPresentTime, nsecs_t* outDequeueReadyTime,
             nsecs_t* outReleaseTime);
 
-    status_t getWideColorSupport(bool* supported);
-    status_t getHdrSupport(bool* supported);
+    status_t getWideColorSupport(bool* supported) __attribute__((__deprecated__));
+    status_t getHdrSupport(bool* supported) __attribute__((__deprecated__));
 
     status_t getUniqueId(uint64_t* outId) const;
     status_t getConsumerUsage(uint64_t* outUsage) const;
 
-    // Returns the CLOCK_MONOTONIC start time of the last dequeueBuffer call
-    nsecs_t getLastDequeueStartTime() const;
+    virtual status_t setFrameRate(float frameRate, int8_t compatibility,
+                                  int8_t changeFrameRateStrategy);
+    virtual status_t setFrameTimelineInfo(uint64_t frameNumber, const FrameTimelineInfo& info);
 
 protected:
     virtual ~Surface();
 
     // Virtual for testing.
     virtual sp<ISurfaceComposer> composerService() const;
+    virtual sp<gui::ISurfaceComposer> composerServiceAIDL() const;
     virtual nsecs_t now() const;
 
 private:
@@ -188,6 +238,14 @@ private:
     static int hook_queueBuffer(ANativeWindow* window,
             ANativeWindowBuffer* buffer, int fenceFd);
     static int hook_setSwapInterval(ANativeWindow* window, int interval);
+
+    static int cancelBufferInternal(ANativeWindow* window, ANativeWindowBuffer* buffer,
+                                    int fenceFd);
+    static int dequeueBufferInternal(ANativeWindow* window, ANativeWindowBuffer** buffer,
+                                     int* fenceFd);
+    static int performInternal(ANativeWindow* window, int operation, va_list args);
+    static int queueBufferInternal(ANativeWindow* window, ANativeWindowBuffer* buffer, int fenceFd);
+    static int queryInternal(const ANativeWindow* window, int what, int* value);
 
     static int hook_cancelBuffer_DEPRECATED(ANativeWindow* window,
             ANativeWindowBuffer* buffer);
@@ -218,6 +276,7 @@ private:
     int dispatchSetBuffersDataSpace(va_list args);
     int dispatchSetBuffersSmpte2086Metadata(va_list args);
     int dispatchSetBuffersCta8613Metadata(va_list args);
+    int dispatchSetBuffersHdr10PlusMetadata(va_list args);
     int dispatchSetSurfaceDamage(va_list args);
     int dispatchSetSharedBufferMode(va_list args);
     int dispatchSetAutoRefresh(va_list args);
@@ -229,6 +288,24 @@ private:
     int dispatchGetWideColorSupport(va_list args);
     int dispatchGetHdrSupport(va_list args);
     int dispatchGetConsumerUsage64(va_list args);
+    int dispatchSetAutoPrerotation(va_list args);
+    int dispatchGetLastDequeueStartTime(va_list args);
+    int dispatchSetDequeueTimeout(va_list args);
+    int dispatchGetLastDequeueDuration(va_list args);
+    int dispatchGetLastQueueDuration(va_list args);
+    int dispatchSetFrameRate(va_list args);
+    int dispatchAddCancelInterceptor(va_list args);
+    int dispatchAddDequeueInterceptor(va_list args);
+    int dispatchAddPerformInterceptor(va_list args);
+    int dispatchAddQueueInterceptor(va_list args);
+    int dispatchAddQueryInterceptor(va_list args);
+    int dispatchGetLastQueuedBuffer(va_list args);
+    int dispatchGetLastQueuedBuffer2(va_list args);
+    int dispatchSetFrameTimelineInfo(va_list args);
+
+    std::mutex mNameMutex;
+    std::string mName;
+    const char* getDebugName();
 
 protected:
     virtual int dequeueBuffer(ANativeWindowBuffer** buffer, int* fenceFd);
@@ -249,6 +326,7 @@ protected:
     virtual int setBuffersDataSpace(ui::Dataspace dataSpace);
     virtual int setBuffersSmpte2086Metadata(const android_smpte2086_metadata* metadata);
     virtual int setBuffersCta8613Metadata(const android_cta861_3_metadata* metadata);
+    virtual int setBuffersHdr10PlusMetadata(const size_t size, const uint8_t* metadata);
     virtual int setCrop(Rect const* rect);
     virtual int setUsage(uint64_t reqUsage);
     virtual void setSurfaceDamage(android_native_rect_t* rects, size_t numRects);
@@ -262,6 +340,7 @@ public:
     virtual int setAsyncMode(bool async);
     virtual int setSharedBufferMode(bool sharedBufferMode);
     virtual int setAutoRefresh(bool autoRefresh);
+    virtual int setAutoPrerotation(bool autoPrerotation);
     virtual int setBuffersDimensions(uint32_t width, uint32_t height);
     virtual int lock(ANativeWindow_Buffer* outBuffer, ARect* inOutDirtyBounds);
     virtual int unlockAndPost();
@@ -280,6 +359,11 @@ public:
             sp<Fence>* outFence);
     virtual int attachBuffer(ANativeWindowBuffer*);
 
+    virtual int connect(
+            int api, bool reportBufferRemoval,
+            const sp<SurfaceListener>& sListener);
+    virtual void destroy();
+
     // When client connects to Surface with reportBufferRemoval set to true, any buffers removed
     // from this Surface will be collected and returned here. Once this method returns, these
     // buffers will no longer be referenced by this Surface unless they are attached to this
@@ -289,16 +373,69 @@ public:
 
     ui::Dataspace getBuffersDataSpace();
 
-    static status_t attachAndQueueBuffer(Surface* surface, sp<GraphicBuffer> buffer);
+    static status_t attachAndQueueBufferWithDataspace(Surface* surface, sp<GraphicBuffer> buffer,
+                                                      ui::Dataspace dataspace);
+
+    // Batch version of dequeueBuffer, cancelBuffer and queueBuffer
+    // Note that these batched operations are not supported when shared buffer mode is being used.
+    struct BatchBuffer {
+        ANativeWindowBuffer* buffer = nullptr;
+        int fenceFd = -1;
+    };
+    virtual int dequeueBuffers(std::vector<BatchBuffer>* buffers);
+    virtual int cancelBuffers(const std::vector<BatchBuffer>& buffers);
+
+    struct BatchQueuedBuffer {
+        ANativeWindowBuffer* buffer = nullptr;
+        int fenceFd = -1;
+        nsecs_t timestamp = NATIVE_WINDOW_TIMESTAMP_AUTO;
+    };
+    virtual int queueBuffers(
+            const std::vector<BatchQueuedBuffer>& buffers);
 
 protected:
     enum { NUM_BUFFER_SLOTS = BufferQueueDefs::NUM_BUFFER_SLOTS };
     enum { DEFAULT_FORMAT = PIXEL_FORMAT_RGBA_8888 };
 
+    class ProducerListenerProxy : public BnProducerListener {
+    public:
+        ProducerListenerProxy(wp<Surface> parent, sp<SurfaceListener> listener)
+               : mParent(parent), mSurfaceListener(listener) {}
+        virtual ~ProducerListenerProxy() {}
+
+        virtual void onBufferReleased() {
+            mSurfaceListener->onBufferReleased();
+        }
+
+        virtual bool needsReleaseNotify() {
+            return mSurfaceListener->needsReleaseNotify();
+        }
+
+        virtual void onBuffersDiscarded(const std::vector<int32_t>& slots);
+    private:
+        wp<Surface> mParent;
+        sp<SurfaceListener> mSurfaceListener;
+    };
+
     void querySupportedTimestampsLocked() const;
 
     void freeAllBuffers();
     int getSlotFromBufferLocked(android_native_buffer_t* buffer) const;
+
+    void getDequeueBufferInputLocked(IGraphicBufferProducer::DequeueBufferInput* dequeueInput);
+
+    void getQueueBufferInputLocked(android_native_buffer_t* buffer, int fenceFd, nsecs_t timestamp,
+            IGraphicBufferProducer::QueueBufferInput* out);
+
+    // For easing in adoption of gralloc4 metadata by vendor components, as well as for supporting
+    // the public ANativeWindow api, allow setting relevant metadata when queueing a buffer through
+    // a native window
+    void applyGrallocMetadataLocked(
+            android_native_buffer_t* buffer,
+            const IGraphicBufferProducer::QueueBufferInput& queueBufferInput);
+
+    void onBufferQueuedLocked(int slot, sp<Fence> fence,
+            const IGraphicBufferProducer::QueueBufferOutput& output);
 
     struct BufferSlot {
         sp<GraphicBuffer> buffer;
@@ -328,11 +465,11 @@ protected:
     uint32_t mReqHeight;
 
     // mReqFormat is the buffer pixel format that will be requested at the next
-    // deuque operation. It is initialized to PIXEL_FORMAT_RGBA_8888.
+    // dequeue operation. It is initialized to PIXEL_FORMAT_RGBA_8888.
     PixelFormat mReqFormat;
 
     // mReqUsage is the set of buffer usage flags that will be requested
-    // at the next deuque operation. It is initialized to 0.
+    // at the next dequeue operation. It is initialized to 0.
     uint64_t mReqUsage;
 
     // mTimestamp is the timestamp that will be used for the next buffer queue
@@ -348,6 +485,11 @@ protected:
     // mHdrMetadata is the HDR metadata that will be used for the next buffer
     // queue operation.  There is no HDR metadata by default.
     HdrMetadata mHdrMetadata;
+
+    // mHdrMetadataIsSet is a bitfield to track which HDR metadata has been set.
+    // Prevent Surface from resetting HDR metadata that was set on a bufer when
+    // HDR metadata is not set on this Surface.
+    uint32_t mHdrMetadataIsSet{0};
 
     // mCrop is the crop rectangle that will be used for the next buffer
     // that gets queued. It is set by calling setCrop.
@@ -388,6 +530,8 @@ protected:
     // mTransformHint is the transform probably applied to buffers of this
     // window. this is only a hint, actual transform may differ.
     uint32_t mTransformHint;
+    virtual uint32_t getTransformHint() const { return mTransformHint; }
+    bool transformToDisplayInverse() const;
 
     // mProducerControlledByApp whether this buffer producer is controlled
     // by the application
@@ -405,6 +549,20 @@ protected:
     // variables of Surface objects. It must be locked whenever the
     // member variables are accessed.
     mutable Mutex mMutex;
+
+    // mInterceptorMutex is the mutex guarding interceptors.
+    mutable std::shared_mutex mInterceptorMutex;
+
+    ANativeWindow_cancelBufferInterceptor mCancelInterceptor = nullptr;
+    void* mCancelInterceptorData = nullptr;
+    ANativeWindow_dequeueBufferInterceptor mDequeueInterceptor = nullptr;
+    void* mDequeueInterceptorData = nullptr;
+    ANativeWindow_performInterceptor mPerformInterceptor = nullptr;
+    void* mPerformInterceptorData = nullptr;
+    ANativeWindow_queueBufferInterceptor mQueueInterceptor = nullptr;
+    void* mQueueInterceptorData = nullptr;
+    ANativeWindow_queryInterceptor mQueryInterceptor = nullptr;
+    void* mQueryInterceptorData = nullptr;
 
     // must be used from the lock/unlock thread
     sp<GraphicBuffer>           mLockedBuffer;
@@ -430,6 +588,7 @@ protected:
     // Caches the values that have been passed to the producer.
     bool mSharedBufferMode;
     bool mAutoRefresh;
+    bool mAutoPrerotation;
 
     // If in shared buffer mode and auto refresh is enabled, store the shared
     // buffer slot and return it for all calls to queue/dequeue without going
@@ -460,8 +619,25 @@ protected:
     bool mEnableFrameTimestamps = false;
     std::unique_ptr<ProducerFrameEventHistory> mFrameEventHistory;
 
+    // Reference to the SurfaceFlinger layer that was used to create this
+    // surface. This is only populated when the Surface is created from
+    // a BlastBufferQueue.
+    sp<IBinder> mSurfaceControlHandle;
+
     bool mReportRemovedBuffers = false;
     std::vector<sp<GraphicBuffer>> mRemovedBuffers;
+    int mMaxBufferCount;
+
+    sp<IProducerListener> mListenerProxy;
+
+    // Get and flush the buffers of given slots, if the buffer in the slot
+    // is currently dequeued then it won't be flushed and won't be returned
+    // in outBuffers.
+    status_t getAndFlushBuffersFromSlots(const std::vector<int32_t>& slots,
+            std::vector<sp<GraphicBuffer>>* outBuffers);
+
+    // Buffers that are successfully dequeued/attached and handed to clients
+    std::unordered_set<int> mDequeuedSlots;
 };
 
 } // namespace android

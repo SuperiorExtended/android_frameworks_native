@@ -14,13 +14,17 @@
  * limitations under the License.
  */
 
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wconversion"
+
 // This is needed for stdint.h to define INT64_MAX in C++
 #define __STDC_LIMIT_MACROS
 
 #include <inttypes.h>
 
+#include <android-base/stringprintf.h>
 #include <android/log.h>
-#include <utils/String8.h>
 
 #include <ui/FrameStats.h>
 
@@ -58,10 +62,9 @@ void FrameTracker::setActualPresentTime(nsecs_t presentTime) {
     mFrameRecords[mOffset].actualPresentTime = presentTime;
 }
 
-void FrameTracker::setActualPresentFence(
-        std::shared_ptr<FenceTime>&& readyFence) {
+void FrameTracker::setActualPresentFence(const std::shared_ptr<FenceTime>& readyFence) {
     Mutex::Autolock lock(mMutex);
-    mFrameRecords[mOffset].actualPresentFence = std::move(readyFence);
+    mFrameRecords[mOffset].actualPresentFence = readyFence;
     mNumFences++;
 }
 
@@ -138,7 +141,7 @@ void FrameTracker::getStats(FrameStats* outStats) const {
     }
 }
 
-void FrameTracker::logAndResetStats(const String8& name) {
+void FrameTracker::logAndResetStats(const std::string_view& name) {
     Mutex::Autolock lock(mMutex);
     logStatsLocked(name);
     resetFrameCountersLocked();
@@ -216,7 +219,7 @@ void FrameTracker::resetFrameCountersLocked() {
     }
 }
 
-void FrameTracker::logStatsLocked(const String8& name) const {
+void FrameTracker::logStatsLocked(const std::string_view& name) const {
     for (int i = 0; i < NUM_FRAME_BUCKETS; i++) {
         if (mNumFrames[i] > 0) {
             EventLog::logFrameDurations(name, mNumFrames, NUM_FRAME_BUCKETS);
@@ -230,19 +233,22 @@ bool FrameTracker::isFrameValidLocked(size_t idx) const {
             mFrameRecords[idx].actualPresentTime < INT64_MAX;
 }
 
-void FrameTracker::dumpStats(String8& result) const {
+void FrameTracker::dumpStats(std::string& result) const {
     Mutex::Autolock lock(mMutex);
     processFencesLocked();
 
     const size_t o = mOffset;
     for (size_t i = 1; i < NUM_FRAME_RECORDS; i++) {
         const size_t index = (o+i) % NUM_FRAME_RECORDS;
-        result.appendFormat("%" PRId64 "\t%" PRId64 "\t%" PRId64 "\n",
-            mFrameRecords[index].desiredPresentTime,
-            mFrameRecords[index].actualPresentTime,
-            mFrameRecords[index].frameReadyTime);
+        base::StringAppendF(&result, "%" PRId64 "\t%" PRId64 "\t%" PRId64 "\n",
+                            mFrameRecords[index].desiredPresentTime,
+                            mFrameRecords[index].actualPresentTime,
+                            mFrameRecords[index].frameReadyTime);
     }
     result.append("\n");
 }
 
 } // namespace android
+
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic pop // ignored "-Wconversion"

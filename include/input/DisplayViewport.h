@@ -14,12 +14,17 @@
  * limitations under the License.
  */
 
-#ifndef _LIBINPUT_DISPLAY_VIEWPORT_H
-#define _LIBINPUT_DISPLAY_VIEWPORT_H
+#pragma once
 
 #include <android-base/stringprintf.h>
-#include <ui/DisplayInfo.h>
+#include <ftl/enum.h>
+#include <ftl/string.h>
+#include <gui/constants.h>
 #include <input/Input.h>
+#include <ui/Rotation.h>
+
+#include <cinttypes>
+#include <optional>
 
 using android::base::StringPrintf;
 
@@ -30,23 +35,12 @@ namespace android {
  * Keep in sync with values in InputManagerService.java.
  */
 enum class ViewportType : int32_t {
-    VIEWPORT_INTERNAL = 1,
-    VIEWPORT_EXTERNAL = 2,
-    VIEWPORT_VIRTUAL = 3,
-};
+    INTERNAL = 1,
+    EXTERNAL = 2,
+    VIRTUAL = 3,
 
-static const char* viewportTypeToString(ViewportType type) {
-    switch(type) {
-        case ViewportType::VIEWPORT_INTERNAL:
-            return "INTERNAL";
-        case ViewportType::VIEWPORT_EXTERNAL:
-            return "EXTERNAL";
-        case ViewportType::VIEWPORT_VIRTUAL:
-            return "VIRTUAL";
-        default:
-            return "UNKNOWN";
-    }
-}
+    ftl_last = VIRTUAL
+};
 
 /*
  * Describes how coordinates are mapped on a physical display.
@@ -54,7 +48,7 @@ static const char* viewportTypeToString(ViewportType type) {
  */
 struct DisplayViewport {
     int32_t displayId; // -1 if invalid
-    int32_t orientation;
+    ui::Rotation orientation;
     int32_t logicalLeft;
     int32_t logicalTop;
     int32_t logicalRight;
@@ -65,31 +59,40 @@ struct DisplayViewport {
     int32_t physicalBottom;
     int32_t deviceWidth;
     int32_t deviceHeight;
+    bool isActive;
     std::string uniqueId;
+    // The actual (hardware) port that the associated display is connected to.
+    // Not all viewports will have this specified.
+    std::optional<uint8_t> physicalPort;
     ViewportType type;
 
-    DisplayViewport() :
-            displayId(ADISPLAY_ID_NONE), orientation(DISPLAY_ORIENTATION_0),
-            logicalLeft(0), logicalTop(0), logicalRight(0), logicalBottom(0),
-            physicalLeft(0), physicalTop(0), physicalRight(0), physicalBottom(0),
-            deviceWidth(0), deviceHeight(0), uniqueId(), type(ViewportType::VIEWPORT_INTERNAL) {
-    }
+    DisplayViewport()
+          : displayId(ADISPLAY_ID_NONE),
+            orientation(ui::ROTATION_0),
+            logicalLeft(0),
+            logicalTop(0),
+            logicalRight(0),
+            logicalBottom(0),
+            physicalLeft(0),
+            physicalTop(0),
+            physicalRight(0),
+            physicalBottom(0),
+            deviceWidth(0),
+            deviceHeight(0),
+            isActive(false),
+            uniqueId(),
+            physicalPort(std::nullopt),
+            type(ViewportType::INTERNAL) {}
 
     bool operator==(const DisplayViewport& other) const {
-        return displayId == other.displayId
-                && orientation == other.orientation
-                && logicalLeft == other.logicalLeft
-                && logicalTop == other.logicalTop
-                && logicalRight == other.logicalRight
-                && logicalBottom == other.logicalBottom
-                && physicalLeft == other.physicalLeft
-                && physicalTop == other.physicalTop
-                && physicalRight == other.physicalRight
-                && physicalBottom == other.physicalBottom
-                && deviceWidth == other.deviceWidth
-                && deviceHeight == other.deviceHeight
-                && uniqueId == other.uniqueId
-                && type == other.type;
+        return displayId == other.displayId && orientation == other.orientation &&
+                logicalLeft == other.logicalLeft && logicalTop == other.logicalTop &&
+                logicalRight == other.logicalRight && logicalBottom == other.logicalBottom &&
+                physicalLeft == other.physicalLeft && physicalTop == other.physicalTop &&
+                physicalRight == other.physicalRight && physicalBottom == other.physicalBottom &&
+                deviceWidth == other.deviceWidth && deviceHeight == other.deviceHeight &&
+                isActive == other.isActive && uniqueId == other.uniqueId &&
+                physicalPort == other.physicalPort && type == other.type;
     }
 
     bool operator!=(const DisplayViewport& other) const {
@@ -102,7 +105,7 @@ struct DisplayViewport {
 
     void setNonDisplayViewport(int32_t width, int32_t height) {
         displayId = ADISPLAY_ID_NONE;
-        orientation = DISPLAY_ORIENTATION_0;
+        orientation = ui::ROTATION_0;
         logicalLeft = 0;
         logicalTop = 0;
         logicalRight = width;
@@ -113,25 +116,24 @@ struct DisplayViewport {
         physicalBottom = height;
         deviceWidth = width;
         deviceHeight = height;
+        isActive = true;
         uniqueId.clear();
-        type = ViewportType::VIEWPORT_INTERNAL;
+        physicalPort = std::nullopt;
+        type = ViewportType::INTERNAL;
     }
 
     std::string toString() const {
-        return StringPrintf("Viewport %s: displayId=%d, orientation=%d, "
-            "logicalFrame=[%d, %d, %d, %d], "
-            "physicalFrame=[%d, %d, %d, %d], "
-            "deviceSize=[%d, %d]",
-            viewportTypeToString(type),
-            displayId, orientation,
-            logicalLeft, logicalTop,
-            logicalRight, logicalBottom,
-            physicalLeft, physicalTop,
-            physicalRight, physicalBottom,
-            deviceWidth, deviceHeight);
+        return StringPrintf("Viewport %s: displayId=%d, uniqueId=%s, port=%s, orientation=%d, "
+                            "logicalFrame=[%d, %d, %d, %d], "
+                            "physicalFrame=[%d, %d, %d, %d], "
+                            "deviceSize=[%d, %d], "
+                            "isActive=[%d]",
+                            ftl::enum_string(type).c_str(), displayId, uniqueId.c_str(),
+                            physicalPort ? ftl::to_string(*physicalPort).c_str() : "<none>",
+                            orientation, logicalLeft, logicalTop, logicalRight, logicalBottom,
+                            physicalLeft, physicalTop, physicalRight, physicalBottom, deviceWidth,
+                            deviceHeight, isActive);
     }
 };
 
 } // namespace android
-
-#endif // _LIBINPUT_DISPLAY_VIEWPORT_H

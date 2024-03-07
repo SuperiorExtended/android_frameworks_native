@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef FRAMEWORK_NATIVE_CMDS_LSHAL_LSHAL_H_
-#define FRAMEWORK_NATIVE_CMDS_LSHAL_LSHAL_H_
+#pragma once
 
 #include <iostream>
 #include <string>
@@ -25,8 +24,8 @@
 #include <utils/StrongPointer.h>
 
 #include "Command.h"
-#include "HelpCommand.h"
 #include "NullableOStream.h"
+#include "ParentDebugInfoLevel.h"
 #include "utils.h"
 
 namespace android {
@@ -51,7 +50,7 @@ public:
             const std::string &interfaceName,
             const std::string &instanceName,
             const std::vector<std::string> &options,
-            bool excludesParentInstances,
+            ParentDebugInfoLevel parentDebugInfoLevel,
             std::ostream &out,
             NullableOStream<std::ostream> err) const;
 
@@ -76,5 +75,3 @@ private:
 
 }  // namespace lshal
 }  // namespace android
-
-#endif  // FRAMEWORK_NATIVE_CMDS_LSHAL_LSHAL_H_

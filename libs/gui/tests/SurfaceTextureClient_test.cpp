@@ -28,8 +28,6 @@
 #include <utils/Log.h>
 #include <utils/Thread.h>
 
-extern "C" EGLAPI const char* eglQueryStringImplementationANDROID(EGLDisplay dpy, EGLint name);
-
 namespace android {
 
 class SurfaceTextureClientTest : public ::testing::Test {
@@ -42,11 +40,6 @@ protected:
     }
 
     virtual void SetUp() {
-        const ::testing::TestInfo* const testInfo =
-            ::testing::UnitTest::GetInstance()->current_test_info();
-        ALOGV("Begin test: %s.%s", testInfo->test_case_name(),
-                testInfo->name());
-
         sp<IGraphicBufferProducer> producer;
         sp<IGraphicBufferConsumer> consumer;
         BufferQueue::createBufferQueue(&producer, &consumer);
@@ -56,7 +49,7 @@ protected:
         mANW = mSTC;
 
         // We need a valid GL context so we can test updateTexImage()
-        // This initializes EGL and create a dummy GL context with a
+        // This initializes EGL and create a GL context placeholder with a
         // pbuffer render target.
         mEglDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY);
         ASSERT_EQ(EGL_SUCCESS, eglGetError());
@@ -98,11 +91,6 @@ protected:
         eglDestroyContext(mEglDisplay, mEglContext);
         eglDestroySurface(mEglDisplay, mEglSurface);
         eglTerminate(mEglDisplay);
-
-        const ::testing::TestInfo* const testInfo =
-            ::testing::UnitTest::GetInstance()->current_test_info();
-        ALOGV("End test:   %s.%s", testInfo->test_case_name(),
-                testInfo->name());
     }
 
     virtual EGLint const* getConfigAttribs() {

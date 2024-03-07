@@ -49,6 +49,7 @@
 #include <android-base/file.h>
 #include <android-base/macros.h>
 #include <android-base/properties.h>
+#include <android-base/strings.h>
 #include <android-base/stringprintf.h>
 
 using namespace android;
@@ -62,7 +63,7 @@ using hardware::atrace::V1_0::toString;
 
 using std::string;
 
-#define MAX_SYS_FILES 10
+#define MAX_SYS_FILES 13
 
 const char* k_traceTagsProperty = "debug.atrace.tags.enableflags";
 const char* k_userInitiatedTraceProperty = "debug.atrace.user_initiated";
@@ -73,7 +74,9 @@ const char* k_coreServiceCategory = "core_services";
 const char* k_pdxServiceCategory = "pdx";
 const char* k_coreServicesProp = "ro.atrace.core.services";
 
-typedef enum { OPT, REQ } requiredness  ;
+const char* kVendorCategoriesPath = "/vendor/etc/atrace/atrace_categories.txt";
+
+typedef enum { OPT, REQ } requiredness;
 
 struct TracingCategory {
     // The name identifying the category.
@@ -99,30 +102,33 @@ struct TracingCategory {
 
 /* Tracing categories */
 static const TracingCategory k_categories[] = {
-    { "gfx",        "Graphics",         ATRACE_TAG_GRAPHICS, { } },
-    { "input",      "Input",            ATRACE_TAG_INPUT, { } },
-    { "view",       "View System",      ATRACE_TAG_VIEW, { } },
-    { "webview",    "WebView",          ATRACE_TAG_WEBVIEW, { } },
-    { "wm",         "Window Manager",   ATRACE_TAG_WINDOW_MANAGER, { } },
-    { "am",         "Activity Manager", ATRACE_TAG_ACTIVITY_MANAGER, { } },
-    { "sm",         "Sync Manager",     ATRACE_TAG_SYNC_MANAGER, { } },
-    { "audio",      "Audio",            ATRACE_TAG_AUDIO, { } },
-    { "video",      "Video",            ATRACE_TAG_VIDEO, { } },
-    { "camera",     "Camera",           ATRACE_TAG_CAMERA, { } },
-    { "hal",        "Hardware Modules", ATRACE_TAG_HAL, { } },
-    { "res",        "Resource Loading", ATRACE_TAG_RESOURCES, { } },
-    { "dalvik",     "Dalvik VM",        ATRACE_TAG_DALVIK, { } },
-    { "rs",         "RenderScript",     ATRACE_TAG_RS, { } },
-    { "bionic",     "Bionic C Library", ATRACE_TAG_BIONIC, { } },
-    { "power",      "Power Management", ATRACE_TAG_POWER, { } },
-    { "pm",         "Package Manager",  ATRACE_TAG_PACKAGE_MANAGER, { } },
-    { "ss",         "System Server",    ATRACE_TAG_SYSTEM_SERVER, { } },
-    { "database",   "Database",         ATRACE_TAG_DATABASE, { } },
-    { "network",    "Network",          ATRACE_TAG_NETWORK, { } },
-    { "adb",        "ADB",              ATRACE_TAG_ADB, { } },
-    { "vibrator",   "Vibrator",         ATRACE_TAG_VIBRATOR, { } },
-    { "aidl",       "AIDL calls",       ATRACE_TAG_AIDL, { } },
-    { "nnapi",      "NNAPI",            ATRACE_TAG_NNAPI, { } },
+    { "gfx",        "Graphics",                 ATRACE_TAG_GRAPHICS, {
+        { OPT,      "events/gpu_mem/gpu_mem_total/enable" },
+    } },
+    { "input",      "Input",                    ATRACE_TAG_INPUT, { } },
+    { "view",       "View System",              ATRACE_TAG_VIEW, { } },
+    { "webview",    "WebView",                  ATRACE_TAG_WEBVIEW, { } },
+    { "wm",         "Window Manager",           ATRACE_TAG_WINDOW_MANAGER, { } },
+    { "am",         "Activity Manager",         ATRACE_TAG_ACTIVITY_MANAGER, { } },
+    { "sm",         "Sync Manager",             ATRACE_TAG_SYNC_MANAGER, { } },
+    { "audio",      "Audio",                    ATRACE_TAG_AUDIO, { } },
+    { "video",      "Video",                    ATRACE_TAG_VIDEO, { } },
+    { "camera",     "Camera",                   ATRACE_TAG_CAMERA, { } },
+    { "hal",        "Hardware Modules",         ATRACE_TAG_HAL, { } },
+    { "res",        "Resource Loading",         ATRACE_TAG_RESOURCES, { } },
+    { "dalvik",     "Dalvik VM",                ATRACE_TAG_DALVIK, { } },
+    { "rs",         "RenderScript",             ATRACE_TAG_RS, { } },
+    { "bionic",     "Bionic C Library",         ATRACE_TAG_BIONIC, { } },
+    { "power",      "Power Management",         ATRACE_TAG_POWER, { } },
+    { "pm",         "Package Manager",          ATRACE_TAG_PACKAGE_MANAGER, { } },
+    { "ss",         "System Server",            ATRACE_TAG_SYSTEM_SERVER, { } },
+    { "database",   "Database",                 ATRACE_TAG_DATABASE, { } },
+    { "network",    "Network",                  ATRACE_TAG_NETWORK, { } },
+    { "adb",        "ADB",                      ATRACE_TAG_ADB, { } },
+    { "vibrator",   "Vibrator",                 ATRACE_TAG_VIBRATOR, { } },
+    { "aidl",       "AIDL calls",               ATRACE_TAG_AIDL, { } },
+    { "nnapi",      "NNAPI",                    ATRACE_TAG_NNAPI, { } },
+    { "rro",        "Runtime Resource Overlay", ATRACE_TAG_RRO, { } },
     { k_coreServiceCategory, "Core services", 0, { } },
     { k_pdxServiceCategory, "PDX services", 0, { } },
     { "sched",      "CPU Scheduling",   0, {
@@ -132,7 +138,11 @@ static const TracingCategory k_categories[] = {
         { OPT,      "events/sched/sched_blocked_reason/enable" },
         { OPT,      "events/sched/sched_cpu_hotplug/enable" },
         { OPT,      "events/sched/sched_pi_setprio/enable" },
+        { OPT,      "events/sched/sched_process_exit/enable" },
         { OPT,      "events/cgroup/enable" },
+        { OPT,      "events/oom/oom_score_adj_update/enable" },
+        { OPT,      "events/task/task_rename/enable" },
+        { OPT,      "events/task/task_newtask/enable" },
     } },
     { "irq",        "IRQ Events",   0, {
         { REQ,      "events/irq/enable" },
@@ -166,6 +176,10 @@ static const TracingCategory k_categories[] = {
         { OPT,      "events/clk/clk_disable/enable" },
         { OPT,      "events/clk/clk_enable/enable" },
         { OPT,      "events/power/cpu_frequency_limits/enable" },
+        { OPT,      "events/power/suspend_resume/enable" },
+        { OPT,      "events/cpuhp/cpuhp_enter/enable" },
+        { OPT,      "events/cpuhp/cpuhp_exit/enable" },
+        { OPT,      "events/cpuhp/cpuhp_pause/enable" },
     } },
     { "membus",     "Memory Bus Utilization", 0, {
         { REQ,      "events/memory_bus/enable" },
@@ -178,12 +192,15 @@ static const TracingCategory k_categories[] = {
         { OPT,      "events/f2fs/f2fs_sync_file_exit/enable" },
         { OPT,      "events/f2fs/f2fs_write_begin/enable" },
         { OPT,      "events/f2fs/f2fs_write_end/enable" },
+        { OPT,      "events/f2fs/f2fs_iostat/enable" },
+        { OPT,      "events/f2fs/f2fs_iostat_latency/enable" },
         { OPT,      "events/ext4/ext4_da_write_begin/enable" },
         { OPT,      "events/ext4/ext4_da_write_end/enable" },
         { OPT,      "events/ext4/ext4_sync_file_enter/enable" },
         { OPT,      "events/ext4/ext4_sync_file_exit/enable" },
-        { REQ,      "events/block/block_rq_issue/enable" },
-        { REQ,      "events/block/block_rq_complete/enable" },
+        { OPT,      "events/block/block_bio_queue/enable" },
+        { OPT,      "events/block/block_bio_complete/enable" },
+        { OPT,      "events/ufs/ufshcd_command/enable" },
     } },
     { "mmc",        "eMMC commands",    0, {
         { REQ,      "events/mmc/enable" },
@@ -192,10 +209,12 @@ static const TracingCategory k_categories[] = {
         { REQ,      "events/cpufreq_interactive/enable" },
     } },
     { "sync",       "Synchronization",  0, {
-        // before linux kernel 4.9
+        // linux kernel < 4.9
         { OPT,      "events/sync/enable" },
-        // starting in linux kernel 4.9
+        // linux kernel == 4.9.x
         { OPT,      "events/fence/enable" },
+        // linux kernel > 4.9
+        { OPT,      "events/dma_fence/enable" },
     } },
     { "workq",      "Kernel Workqueues", 0, {
         { REQ,      "events/workqueue/enable" },
@@ -225,13 +244,34 @@ static const TracingCategory k_categories[] = {
         { REQ,      "events/filemap/enable" },
     } },
     { "memory",  "Memory", 0, {
-        { OPT,      "events/kmem/rss_stat/enable" },
+        { OPT,      "events/mm_event/mm_event_record/enable" },
+        { OPT,      "events/synthetic/rss_stat_throttled/enable" },
         { OPT,      "events/kmem/ion_heap_grow/enable" },
         { OPT,      "events/kmem/ion_heap_shrink/enable" },
+        { OPT,      "events/ion/ion_stat/enable" },
+        { OPT,      "events/gpu_mem/gpu_mem_total/enable" },
+        { OPT,      "events/fastrpc/fastrpc_dma_stat/enable" },
+    } },
+    { "thermal",  "Thermal event", ATRACE_TAG_THERMAL, {
+        { REQ,      "events/thermal/thermal_temperature/enable" },
+        { OPT,      "events/thermal/cdev_update/enable" },
     } },
 };
 
-struct TracingVendorCategory {
+// A category in the vendor categories file.
+struct TracingVendorFileCategory {
+    // The name identifying the category.
+    std::string name;
+
+    // If the category is enabled through command.
+    bool enabled = false;
+
+    // Paths to the ftrace enable files (relative to g_traceFolder).
+    std::vector<std::string> ftrace_enable_paths;
+};
+
+// A category in the vendor HIDL HAL.
+struct TracingVendorHalCategory {
     // The name identifying the category.
     std::string name;
 
@@ -241,11 +281,8 @@ struct TracingVendorCategory {
     // If the category is enabled through command.
     bool enabled;
 
-    TracingVendorCategory(string &&name, string &&description, bool enabled)
-            : name(std::move(name))
-            , description(std::move(description))
-            , enabled(enabled)
-    {}
+    TracingVendorHalCategory(string&& name, string&& description, bool enabled)
+          : name(std::move(name)), description(std::move(description)), enabled(enabled) {}
 };
 
 /* Command line options */
@@ -265,8 +302,9 @@ static bool g_tracePdx = false;
 static bool g_traceAborted = false;
 static bool g_categoryEnables[arraysize(k_categories)] = {};
 static std::string g_traceFolder;
+static std::vector<TracingVendorFileCategory> g_vendorFileCategories;
 static sp<IAtraceDevice> g_atraceHal;
-static std::vector<TracingVendorCategory> g_vendorCategories;
+static std::vector<TracingVendorHalCategory> g_vendorHalCategories;
 
 /* Sys file paths */
 static const char* k_traceClockPath =
@@ -301,9 +339,6 @@ static const char* k_funcgraphCpuPath =
 
 static const char* k_funcgraphProcPath =
     "options/funcgraph-proc";
-
-static const char* k_funcgraphFlatPath =
-    "options/funcgraph-flat";
 
 static const char* k_ftraceFilterPath =
     "set_ftrace_filter";
@@ -435,14 +470,10 @@ static bool isCategorySupported(const TracingCategory& category)
         const char* path = category.sysfiles[i].path;
         bool req = category.sysfiles[i].required == REQ;
         if (path != nullptr) {
-            if (req) {
-                if (!fileIsWritable(path)) {
-                    return false;
-                } else {
-                    ok = true;
-                }
-            } else {
+            if (fileIsWritable(path)) {
                 ok = true;
+            } else if (req) {
+                return false;
             }
         }
     }
@@ -567,81 +598,6 @@ static bool setPrintTgidEnableIfPresent(bool enable)
     return true;
 }
 
-// Poke all the binder-enabled processes in the system to get them to re-read
-// their system properties.
-static bool pokeBinderServices()
-{
-    sp<IServiceManager> sm = defaultServiceManager();
-    Vector<String16> services = sm->listServices();
-    for (size_t i = 0; i < services.size(); i++) {
-        sp<IBinder> obj = sm->checkService(services[i]);
-        if (obj != nullptr) {
-            Parcel data;
-            if (obj->transact(IBinder::SYSPROPS_TRANSACTION, data,
-                    nullptr, 0) != OK) {
-                if (false) {
-                    // XXX: For some reason this fails on tablets trying to
-                    // poke the "phone" service.  It's not clear whether some
-                    // are expected to fail.
-                    String8 svc(services[i]);
-                    fprintf(stderr, "error poking binder service %s\n",
-                        svc.string());
-                    return false;
-                }
-            }
-        }
-    }
-    return true;
-}
-
-// Poke all the HAL processes in the system to get them to re-read
-// their system properties.
-static void pokeHalServices()
-{
-    using ::android::hidl::base::V1_0::IBase;
-    using ::android::hidl::manager::V1_0::IServiceManager;
-    using ::android::hardware::hidl_string;
-    using ::android::hardware::Return;
-
-    sp<IServiceManager> sm = ::android::hardware::defaultServiceManager();
-
-    if (sm == nullptr) {
-        fprintf(stderr, "failed to get IServiceManager to poke hal services\n");
-        return;
-    }
-
-    auto listRet = sm->list([&](const auto &interfaces) {
-        for (size_t i = 0; i < interfaces.size(); i++) {
-            string fqInstanceName = interfaces[i];
-            string::size_type n = fqInstanceName.find('/');
-            if (n == std::string::npos || interfaces[i].size() == n+1)
-                continue;
-            hidl_string fqInterfaceName = fqInstanceName.substr(0, n);
-            hidl_string instanceName = fqInstanceName.substr(n+1, std::string::npos);
-            Return<sp<IBase>> interfaceRet = sm->get(fqInterfaceName, instanceName);
-            if (!interfaceRet.isOk()) {
-                // ignore
-                continue;
-            }
-
-            sp<IBase> interface = interfaceRet;
-            if (interface == nullptr) {
-                // ignore
-                continue;
-            }
-
-            auto notifyRet = interface->notifySyspropsChanged();
-            if (!notifyRet.isOk()) {
-                // ignore
-            }
-        }
-    });
-    if (!listRet.isOk()) {
-        // TODO(b/34242478) fix this when we determine the correct ACL
-        //fprintf(stderr, "failed to list services: %s\n", listRet.description().c_str());
-    }
-}
-
 // Set the trace tags that userland tracing uses, and poke the running
 // processes to pick up the new value.
 static bool setTagsProperty(uint64_t tags)
@@ -705,6 +661,13 @@ static bool disableKernelTraceEvents() {
             }
         }
     }
+    for (const TracingVendorFileCategory& c : g_vendorFileCategories) {
+        for (const std::string& path : c.ftrace_enable_paths) {
+            if (fileIsWritable(path.c_str())) {
+                ok &= setKernelOptionEnable(path.c_str(), false);
+            }
+        }
+    }
     return ok;
 }
 
@@ -761,7 +724,6 @@ static bool setKernelTraceFuncs(const char* funcs)
         ok &= setKernelOptionEnable(k_funcgraphAbsTimePath, true);
         ok &= setKernelOptionEnable(k_funcgraphCpuPath, true);
         ok &= setKernelOptionEnable(k_funcgraphProcPath, true);
-        ok &= setKernelOptionEnable(k_funcgraphFlatPath, true);
 
         // Set the requested filter functions.
         ok &= truncateFile(k_ftraceFilterPath);
@@ -785,7 +747,13 @@ static bool setKernelTraceFuncs(const char* funcs)
 static bool setCategoryEnable(const char* name)
 {
     bool vendor_found = false;
-    for (auto &c : g_vendorCategories) {
+    for (auto& c : g_vendorFileCategories) {
+        if (strcmp(name, c.name.c_str()) == 0) {
+            c.enabled = true;
+            vendor_found = true;
+        }
+    }
+    for (auto& c : g_vendorHalCategories) {
         if (strcmp(name, c.name.c_str()) == 0) {
             c.enabled = true;
             vendor_found = true;
@@ -850,7 +818,6 @@ static bool setUpUserspaceTracing()
             tags |= c.tags;
         }
     }
-    ok &= setTagsProperty(tags);
 
     bool coreServicesTagEnabled = false;
     for (size_t i = 0; i < arraysize(k_categories); i++) {
@@ -872,9 +839,7 @@ static bool setUpUserspaceTracing()
         packageList += android::base::GetProperty(k_coreServicesProp, "");
     }
     ok &= setAppCmdlineProperty(&packageList[0]);
-    ok &= pokeBinderServices();
-    pokeHalServices();
-
+    ok &= setTagsProperty(tags);
     if (g_tracePdx) {
         ok &= ServiceUtility::PokeServices();
     }
@@ -886,7 +851,6 @@ static void cleanUpUserspaceTracing()
 {
     setTagsProperty(0);
     clearAppProperties();
-    pokeBinderServices();
 
     if (g_tracePdx) {
         ServiceUtility::PokeServices();
@@ -930,6 +894,16 @@ static bool setUpKernelTracing()
                         fprintf(stderr, "error writing file %s\n", path);
                         ok = false;
                     }
+                }
+            }
+        }
+    }
+
+    for (const TracingVendorFileCategory& c : g_vendorFileCategories) {
+        if (c.enabled) {
+            for (const std::string& path : c.ftrace_enable_paths) {
+                if (fileIsWritable(path.c_str())) {
+                    ok &= setKernelOptionEnable(path.c_str(), true);
                 }
             }
         }
@@ -1120,7 +1094,10 @@ static void listSupportedCategories()
             printf("  %10s - %s\n", c.name, c.longname);
         }
     }
-    for (const auto &c : g_vendorCategories) {
+    for (const auto& c : g_vendorFileCategories) {
+        printf("  %10s - (VENDOR)\n", c.name.c_str());
+    }
+    for (const auto& c : g_vendorHalCategories) {
         printf("  %10s - %s (HAL)\n", c.name.c_str(), c.description.c_str());
     }
 }
@@ -1179,8 +1156,38 @@ bool findTraceFiles()
     return true;
 }
 
-void initVendorCategories()
-{
+void initVendorCategoriesFromFile() {
+    std::ifstream is(kVendorCategoriesPath);
+    for (std::string line; std::getline(is, line);) {
+        if (line.empty()) {
+            continue;
+        }
+        if (android::base::StartsWith(line, ' ') || android::base::StartsWith(line, '\t')) {
+            if (g_vendorFileCategories.empty()) {
+                fprintf(stderr, "Malformed vendor categories file\n");
+                exit(1);
+                return;
+            }
+            std::string_view path = std::string_view(line).substr(1);
+            while (android::base::StartsWith(path, ' ') || android::base::StartsWith(path, '\t')) {
+                path.remove_prefix(1);
+            }
+            if (path.empty()) {
+                continue;
+            }
+            std::string enable_path = "events/";
+            enable_path += path;
+            enable_path += "/enable";
+            g_vendorFileCategories.back().ftrace_enable_paths.push_back(std::move(enable_path));
+        } else {
+            TracingVendorFileCategory cat;
+            cat.name = line;
+            g_vendorFileCategories.push_back(std::move(cat));
+        }
+    }
+}
+
+void initVendorCategoriesFromHal() {
     g_atraceHal = IAtraceDevice::getService();
 
     if (g_atraceHal == nullptr) {
@@ -1188,27 +1195,34 @@ void initVendorCategories()
         return;
     }
 
-    Return<void> ret = g_atraceHal->listCategories(
-        [](const auto& list) {
-            g_vendorCategories.reserve(list.size());
-            for (const auto& category : list) {
-                g_vendorCategories.emplace_back(category.name, category.description, false);
-            }
-        });
+    Return<void> ret = g_atraceHal->listCategories([](const auto& list) {
+        g_vendorHalCategories.reserve(list.size());
+        for (const auto& category : list) {
+            g_vendorHalCategories.emplace_back(category.name, category.description, false);
+        }
+    });
     if (!ret.isOk()) {
         fprintf(stderr, "calling atrace HAL failed: %s\n", ret.description().c_str());
     }
 }
 
-static bool setUpVendorTracing()
-{
+void initVendorCategories() {
+    // If kVendorCategoriesPath exists on the filesystem, do not use the HAL.
+    if (access(kVendorCategoriesPath, F_OK) != -1) {
+        initVendorCategoriesFromFile();
+    } else {
+        initVendorCategoriesFromHal();
+    }
+}
+
+static bool setUpVendorTracingWithHal() {
     if (g_atraceHal == nullptr) {
         // No atrace HAL
         return true;
     }
 
     std::vector<hidl_string> categories;
-    for (const auto &c : g_vendorCategories) {
+    for (const auto& c : g_vendorHalCategories) {
         if (c.enabled) {
             categories.emplace_back(c.name);
         }
@@ -1229,15 +1243,14 @@ static bool setUpVendorTracing()
     return true;
 }
 
-static bool cleanUpVendorTracing()
-{
+static bool cleanUpVendorTracingWithHal() {
     if (g_atraceHal == nullptr) {
         // No atrace HAL
         return true;
     }
 
-    if (!g_vendorCategories.size()) {
-        // No vendor categories
+    if (!g_vendorHalCategories.size()) {
+        // No vendor HAL categories
         return true;
     }
 
@@ -1291,10 +1304,7 @@ int main(int argc, char **argv)
 
         if (ret < 0) {
             for (int i = optind; i < argc; i++) {
-                if (!setCategoryEnable(argv[i])) {
-                    fprintf(stderr, "error enabling tracing category \"%s\"\n", argv[i]);
-                    exit(1);
-                }
+                setCategoryEnable(argv[i]);
             }
             break;
         }
@@ -1394,7 +1404,7 @@ int main(int argc, char **argv)
 
     if (ok && traceStart && !onlyUserspace) {
         ok &= setUpKernelTracing();
-        ok &= setUpVendorTracing();
+        ok &= setUpVendorTracingWithHal();
         ok &= startTrace();
     }
 
@@ -1410,10 +1420,10 @@ int main(int argc, char **argv)
         // contain entries from only one CPU can cause "begin" entries without a
         // matching "end" entry to show up if a task gets migrated from one CPU to
         // another.
-        if (!onlyUserspace)
+        if (!onlyUserspace) {
             ok = clearTrace();
-
-        writeClockSyncMarker();
+            writeClockSyncMarker();
+        }
         if (ok && !async && !traceStream) {
             // Sleep to allow the trace to be captured.
             struct timespec timeLeft;
@@ -1463,10 +1473,11 @@ int main(int argc, char **argv)
 
     // Reset the trace buffer size to 1.
     if (traceStop) {
-        cleanUpVendorTracing();
         cleanUpUserspaceTracing();
-        if (!onlyUserspace)
+        if (!onlyUserspace) {
+            cleanUpVendorTracingWithHal();
             cleanUpKernelTracing();
+        }
     }
 
     return g_traceAborted ? 1 : 0;

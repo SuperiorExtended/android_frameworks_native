@@ -20,12 +20,17 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include <ftl/flags.h>
+
 #include <utils/Errors.h>
 #include <utils/RefBase.h>
 #include <utils/Timers.h>
 
+#include <android/gui/ISurfaceComposer.h>
 #include <binder/IInterface.h>
-#include <gui/ISurfaceComposer.h>
+#include <gui/VsyncEventData.h>
+
+#include <ui/DisplayId.h>
 
 // ----------------------------------------------------------------------------
 
@@ -33,7 +38,11 @@ namespace android {
 
 // ----------------------------------------------------------------------------
 
-class IDisplayEventConnection;
+using EventRegistrationFlags = ftl::Flags<gui::ISurfaceComposer::EventRegistration>;
+
+using gui::IDisplayEventConnection;
+using gui::ParcelableVsyncEventData;
+using gui::VsyncEventData;
 
 namespace gui {
 class BitTube;
@@ -49,31 +58,54 @@ static inline constexpr uint32_t fourcc(char c1, char c2, char c3, char c4) {
 // ----------------------------------------------------------------------------
 class DisplayEventReceiver {
 public:
+
     enum {
         DISPLAY_EVENT_VSYNC = fourcc('v', 's', 'y', 'n'),
         DISPLAY_EVENT_HOTPLUG = fourcc('p', 'l', 'u', 'g'),
+        DISPLAY_EVENT_MODE_CHANGE = fourcc('m', 'o', 'd', 'e'),
+        DISPLAY_EVENT_NULL = fourcc('n', 'u', 'l', 'l'),
+        DISPLAY_EVENT_FRAME_RATE_OVERRIDE = fourcc('r', 'a', 't', 'e'),
+        DISPLAY_EVENT_FRAME_RATE_OVERRIDE_FLUSH = fourcc('f', 'l', 's', 'h'),
     };
 
     struct Event {
+        // We add __attribute__((aligned(8))) for nsecs_t fields because
+        // we need to make sure all fields are aligned the same with x86
+        // and x64 (long long has different default alignment):
+        //
+        // https://en.wikipedia.org/wiki/Data_structure_alignment
 
         struct Header {
             uint32_t type;
-            uint32_t id;
+            PhysicalDisplayId displayId __attribute__((aligned(8)));
             nsecs_t timestamp __attribute__((aligned(8)));
         };
 
         struct VSync {
             uint32_t count;
+            VsyncEventData vsyncData;
         };
 
         struct Hotplug {
             bool connected;
         };
 
+        struct ModeChange {
+            int32_t modeId;
+            nsecs_t vsyncPeriod __attribute__((aligned(8)));
+        };
+
+        struct FrameRateOverride {
+            uid_t uid __attribute__((aligned(8)));
+            float frameRateHz __attribute__((aligned(8)));
+        };
+
         Header header;
         union {
             VSync vsync;
             Hotplug hotplug;
+            ModeChange modeChange;
+            FrameRateOverride frameRateOverride;
         };
     };
 
@@ -82,10 +114,13 @@ public:
      * DisplayEventReceiver creates and registers an event connection with
      * SurfaceFlinger. VSync events are disabled by default. Call setVSyncRate
      * or requestNextVsync to receive them.
-     * Other events start being delivered immediately.
+     * To receive ModeChanged and/or FrameRateOverrides events specify this in
+     * the constructor. Other events start being delivered immediately.
      */
-    DisplayEventReceiver(
-            ISurfaceComposer::VsyncSource vsyncSource = ISurfaceComposer::eVsyncSourceApp);
+    explicit DisplayEventReceiver(gui::ISurfaceComposer::VsyncSource vsyncSource =
+                                          gui::ISurfaceComposer::VsyncSource::eVsyncSourceApp,
+                                  EventRegistrationFlags eventRegistration = {},
+                                  const sp<IBinder>& layerHandle = nullptr);
 
     /*
      * ~DisplayEventReceiver severs the connection with SurfaceFlinger, new events
@@ -119,6 +154,7 @@ public:
      * sendEvents write events to the queue and returns how many events were
      * written.
      */
+    ssize_t sendEvents(Event const* events, size_t count);
     static ssize_t sendEvents(gui::BitTube* dataChannel, Event const* events, size_t count);
 
     /*
@@ -135,10 +171,21 @@ public:
      */
     status_t requestNextVsync();
 
+    /**
+     * getLatestVsyncEventData() gets the latest vsync event data.
+     */
+    status_t getLatestVsyncEventData(ParcelableVsyncEventData* outVsyncEventData) const;
+
 private:
     sp<IDisplayEventConnection> mEventConnection;
     std::unique_ptr<gui::BitTube> mDataChannel;
+    std::optional<status_t> mInitError;
 };
+
+inline bool operator==(DisplayEventReceiver::Event::FrameRateOverride lhs,
+                       DisplayEventReceiver::Event::FrameRateOverride rhs) {
+    return (lhs.uid == rhs.uid) && std::abs(lhs.frameRateHz - rhs.frameRateHz) < 0.001f;
+}
 
 // ----------------------------------------------------------------------------
 }; // namespace android

@@ -37,7 +37,7 @@ class ISurfaceComposer;
 // Users of this class should not retain the value from
 // getComposerService() for an extended period.
 //
-// (It's not clear that using Singleton is useful here anymore.)
+// (TODO: b/219785927, It's not clear that using Singleton is useful here anymore.)
 class ComposerService : public Singleton<ComposerService>
 {
     sp<ISurfaceComposer> mComposerService;
@@ -45,13 +45,12 @@ class ComposerService : public Singleton<ComposerService>
     Mutex mLock;
 
     ComposerService();
-    void connectLocked();
+    bool connectLocked();
     void composerServiceDied();
     friend class Singleton<ComposerService>;
 public:
-
     // Get a connection to the Composer Service.  This will block until
-    // a connection is established.
+    // a connection is established. Returns null if permission is denied.
     static sp<ISurfaceComposer> getComposerService();
 };
 

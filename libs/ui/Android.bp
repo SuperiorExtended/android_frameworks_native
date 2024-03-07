@@ -12,6 +12,95 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+package {
+    default_applicable_licenses: ["frameworks_native_libs_ui_license"],
+}
+
+// Added automatically by a large-scale-change
+// See: http://go/android-license-faq
+license {
+    name: "frameworks_native_libs_ui_license",
+    visibility: [":__subpackages__"],
+    license_kinds: [
+        "SPDX-license-identifier-Apache-2.0",
+    ],
+    license_text: [
+        "NOTICE",
+    ],
+}
+
+cc_library_headers {
+    name: "libui_fuzzableDataspaces_headers",
+    export_include_dirs: ["include/ui/fuzzer/"],
+}
+
+cc_defaults {
+    name: "libui-defaults",
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
+    cppflags: [
+        "-Wextra",
+    ],
+
+    sanitize: {
+        integer_overflow: true,
+        misc_undefined: ["bounds"],
+    },
+}
+
+cc_library_static {
+    name: "libui-types",
+    vendor_available: true,
+    host_supported: true,
+    target: {
+        windows: {
+            enabled: true,
+        },
+    },
+
+    defaults: [
+        "libui-defaults",
+    ],
+
+    apex_available: [
+        "//apex_available:anyapex",
+        "//apex_available:platform",
+    ],
+    min_sdk_version: "apex_inherit",
+
+    shared_libs: [
+        "libbase",
+        "libutils",
+    ],
+
+    static_libs: [
+        "libarect",
+        "libmath",
+    ],
+
+    srcs: [
+        "ColorSpace.cpp",
+        "Rect.cpp",
+        "Region.cpp",
+        "Transform.cpp",
+    ],
+
+    export_include_dirs: [
+        "include",
+        "include_mock",
+        "include_private",
+        "include_types",
+    ],
+
+    export_static_lib_headers: [
+        "libarect",
+        "libmath",
+    ],
+
+}
+
 cc_library_shared {
     name: "libui",
     vendor_available: true,
@@ -20,117 +109,114 @@ cc_library_shared {
     },
     double_loadable: true,
 
-    clang: true,
     cflags: [
         "-Wall",
         "-Werror",
     ],
     cppflags: [
-        "-std=c++1z",
-        "-Weverything",
-
-        // The static constructors and destructors in this library have not been noted to
-        // introduce significant overheads
-        "-Wno-exit-time-destructors",
-        "-Wno-global-constructors",
-
-        // We only care about compiling as C++14
-        "-Wno-c++98-compat-pedantic",
-
-        // We are aware of the risks inherent in comparing floats for equality
-        "-Wno-float-equal",
-
-        // We use four-character constants for the GraphicBuffer header, and don't care
-        // that they're non-portable as long as they're consistent within one execution
-        "-Wno-four-char-constants",
-
-        // Don't warn about struct padding
-        "-Wno-padded",
+        "-Wextra",
     ],
 
     sanitize: {
         integer_overflow: true,
+        misc_undefined: ["bounds"],
     },
 
     srcs: [
-        "ColorSpace.cpp",
-        "BufferHubBuffer.cpp",
-        "BufferHubMetadata.cpp",
         "DebugUtils.cpp",
+        "DeviceProductInfo.cpp",
+        "DisplayIdentification.cpp",
+        "DynamicDisplayInfo.cpp",
         "Fence.cpp",
         "FenceTime.cpp",
         "FrameStats.cpp",
+        "Gralloc.cpp",
         "Gralloc2.cpp",
+        "Gralloc3.cpp",
+        "Gralloc4.cpp",
+        "Gralloc5.cpp",
         "GraphicBuffer.cpp",
         "GraphicBufferAllocator.cpp",
         "GraphicBufferMapper.cpp",
-        "HdrCapabilities.cpp",
         "PixelFormat.cpp",
-        "Rect.cpp",
-        "Region.cpp",
-        "Transform.cpp",
-        "UiConfig.cpp",
+        "PublicFormat.cpp",
+        "StaticAsserts.cpp",
     ],
 
     include_dirs: [
         "frameworks/native/include",
     ],
+    export_include_dirs: [
+        "include",
+        "include_private",
+    ],
+
+    defaults: [
+        "android.hardware.graphics.allocator-ndk_shared",
+        "android.hardware.graphics.common-ndk_shared",
+        "libui-defaults",
+        // Uncomment the following line to enable VALIDATE_REGIONS traces
+        //defaults: ["libui-validate-regions-defaults"],
+    ],
 
     shared_libs: [
         "android.hardware.graphics.allocator@2.0",
+        "android.hardware.graphics.allocator@3.0",
+        "android.hardware.graphics.allocator@4.0",
         "android.hardware.graphics.common@1.2",
         "android.hardware.graphics.mapper@2.0",
         "android.hardware.graphics.mapper@2.1",
-        "android.hardware.configstore@1.0",
-        "android.hardware.configstore-utils",
+        "android.hardware.graphics.mapper@3.0",
+        "android.hardware.graphics.mapper@4.0",
         "libbase",
+        "libbinder_ndk",
         "libcutils",
-        "libhardware",
+        "libgralloctypes",
         "libhidlbase",
-        "libhidltransport",
-        "libhwbinder",
         "libsync",
         "libutils",
-        "libutilscallstack",
         "liblog",
-        "libpdx_default_transport",  // TODO(b/112338294): Remove this once BufferHub moved to use Binder.
+        "libvndksupport",
     ],
 
     export_shared_lib_headers: [
         "android.hardware.graphics.common@1.2",
+        "android.hardware.graphics.mapper@4.0",
+        "libgralloctypes",
     ],
 
     static_libs: [
+        "libaidlcommonsupport",
         "libarect",
         "libgrallocusage",
         "libmath",
     ],
 
+    whole_static_libs: [
+        "libui-types",
+    ],
+
     // bufferhub is not used when building libgui for vendors
     target: {
         vendor: {
+            cflags: ["-DLIBUI_IN_VNDK"],
             exclude_srcs: [
-                "BufferHubBuffer.cpp",
-                "BufferHubMetadata.cpp",
             ],
             exclude_header_libs: [
-                "libbufferhub_headers",
-                "libdvr_headers",
             ],
             exclude_shared_libs: [
-                "libpdx_default_transport",
             ],
         },
     },
 
     header_libs: [
         "libbase_headers",
-        "libbufferhub_headers",
-        "libdvr_headers",
         "libnativebase_headers",
+        "libnativewindow_headers",
         "libhardware_headers",
         "libui_headers",
-        "libpdx_headers",
+        "libimapper_stablec",
+        "libimapper_providerutils",
     ],
 
     export_static_lib_headers: [
@@ -141,12 +227,19 @@ cc_library_shared {
     export_header_lib_headers: [
         "libbase_headers",
         "libnativebase_headers",
+        "libnativewindow_headers",
         "libhardware_headers",
         "libui_headers",
     ],
+    min_sdk_version: "29",
+    // TODO(b/214400477) to remove use of GraphicBuffer
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.media.swcodec",
+        "test_com.android.media.swcodec",
+    ],
 
-    // TODO(b/117568153): Temporarily opt out using libcrt.
-    no_libcrt: true,
+    afdo: true,
 }
 
 cc_library_headers {
@@ -155,12 +248,44 @@ cc_library_headers {
     vendor_available: true,
     target: {
         vendor: {
+            cflags: ["-DLIBUI_IN_VNDK"],
             override_export_include_dirs: ["include_vndk"],
         },
     },
+    header_libs: [
+        "libnativewindow_headers",
+        "libmath_headers",
+    ],
+    export_header_lib_headers: [
+        "libnativewindow_headers",
+        "libmath_headers",
+    ],
+    min_sdk_version: "29",
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.media.swcodec",
+        "test_com.android.media.swcodec",
+    ],
+}
+
+// defaults to enable VALIDATE_REGIONS traces
+cc_defaults {
+    name: "libui-validate-regions-defaults",
+    shared_libs: ["libutilscallstack"],
+    cflags: ["-DVALIDATE_REGIONS"],
 }
 
 subdirs = [
     "tests",
     "tools",
 ]
+
+filegroup {
+    name: "libui_host_common",
+    srcs: [
+        "Rect.cpp",
+        "Region.cpp",
+        "PixelFormat.cpp",
+        "Transform.cpp",
+    ],
+}

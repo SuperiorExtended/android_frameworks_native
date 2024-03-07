@@ -26,6 +26,10 @@
 
 namespace android {
 
+namespace mock {
+class MockFence;
+}
+
 class String8;
 
 // ===========================================================================
@@ -99,11 +103,17 @@ public:
     // be returned and errno will indicate the problem.
     int dup() const;
 
+    // Return the underlying file descriptor without giving up ownership. The
+    // returned file descriptor is only valid for as long as the owning Fence
+    // object lives. (If the situation is unclear, dup() is always a safer
+    // option.)
+    int get() const { return mFenceFd.get(); }
+
     // getSignalTime returns the system monotonic clock time at which the
     // fence transitioned to the signaled state.  If the fence is not signaled
     // then SIGNAL_TIME_PENDING is returned.  If the fence is invalid or if an
     // error occurs then SIGNAL_TIME_INVALID is returned.
-    nsecs_t getSignalTime() const;
+    virtual nsecs_t getSignalTime() const;
 
     enum class Status {
         Invalid,     // Fence is invalid
@@ -114,7 +124,7 @@ public:
     // getStatus() returns whether the fence has signaled yet. Prefer this to
     // getSignalTime() or wait() if all you care about is whether the fence has
     // signaled.
-    inline Status getStatus() {
+    virtual inline Status getStatus() {
         // The sync_wait call underlying wait() has been measured to be
         // significantly faster than the sync_fence_info call underlying
         // getSignalTime(), which might otherwise appear to be the more obvious
@@ -138,7 +148,10 @@ public:
 private:
     // Only allow instantiation using ref counting.
     friend class LightRefBase<Fence>;
-    ~Fence() = default;
+    virtual ~Fence() = default;
+
+    // Allow mocking for unit testing
+    friend class mock::MockFence;
 
     base::unique_fd mFenceFd;
 };

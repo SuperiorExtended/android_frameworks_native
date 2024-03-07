@@ -17,13 +17,17 @@
 #ifndef ANDROID_UI_RECT
 #define ANDROID_UI_RECT
 
+#include <ostream>
+
+#include <log/log.h>
 #include <utils/Flattenable.h>
 #include <utils/Log.h>
 #include <utils/TypeHelpers.h>
-#include <log/log.h>
 
+#include <math/HashCombine.h>
 #include <ui/FloatRect.h>
 #include <ui/Point.h>
+#include <ui/Size.h>
 
 #include <android/rect.h>
 
@@ -78,6 +82,13 @@ public:
         bottom = static_cast<int32_t>(floatRect.bottom + 0.5f);
     }
 
+    inline explicit Rect(const ui::Size& size) {
+        left = 0;
+        top = 0;
+        right = size.width;
+        bottom = size.height;
+    }
+
     void makeInvalid();
 
     inline void clear() {
@@ -106,6 +117,8 @@ public:
         return bottom - top;
     }
 
+    ui::Size getSize() const { return ui::Size(getWidth(), getHeight()); }
+
     __attribute__((no_sanitize("signed-integer-overflow")))
     inline Rect getBounds() const {
         return Rect(right - left, bottom - top);
@@ -120,7 +133,7 @@ public:
         right = rb.x;
         bottom = rb.y;
     }
-    
+
     // the following 4 functions return the 4 corners of the rect as Point
     Point leftTop() const {
         return Point(left, top);
@@ -175,6 +188,11 @@ public:
     Rect& offsetTo(int32_t x, int32_t y);
     Rect& offsetBy(int32_t x, int32_t y);
 
+    /**
+     * Insets the rectangle on all sides specified by the insets.
+     */
+    Rect& inset(int32_t _left, int32_t _top, int32_t _right, int32_t _bottom);
+
     bool intersect(const Rect& with, Rect* result) const;
 
     // Create a new Rect by transforming this one using a graphics HAL
@@ -184,6 +202,15 @@ public:
     // (height, width).  Otherwise the output rectangle is in the same space as
     // the input.
     Rect transform(uint32_t xform, int32_t width, int32_t height) const;
+
+    Rect scale(float scaleX, float scaleY) const {
+        return Rect(FloatRect(left * scaleX, top * scaleY, right * scaleX, bottom * scaleY));
+    }
+
+    Rect& scaleSelf(float scaleX, float scaleY) {
+        set(scale(scaleX, scaleY));
+        return *this;
+    }
 
     // this calculates (Region(*this) - exclude).bounds() efficiently
     Rect reduce(const Rect& exclude) const;
@@ -199,8 +226,22 @@ public:
     }
 };
 
+std::string to_string(const android::Rect& rect);
+
+// Defining PrintTo helps with Google Tests.
+void PrintTo(const Rect& rect, ::std::ostream* os);
+
 ANDROID_BASIC_TYPES_TRAITS(Rect)
 
 }; // namespace android
+
+namespace std {
+template <>
+struct hash<android::Rect> {
+    size_t operator()(const android::Rect& rect) const {
+        return android::hashCombine(rect.left, rect.top, rect.right, rect.bottom);
+    }
+};
+} // namespace std
 
 #endif // ANDROID_UI_RECT

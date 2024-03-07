@@ -20,10 +20,10 @@
 #include <mutex>
 #include <vector>
 
+#include <android-base/unique_fd.h>
 #include <binder/BinderService.h>
 
 #include "android/os/BnDumpstate.h"
-#include "android/os/BnDumpstateToken.h"
 #include "dumpstate.h"
 
 namespace android {
@@ -37,15 +37,33 @@ class DumpstateService : public BinderService<DumpstateService>, public BnDumpst
     static char const* getServiceName();
 
     status_t dump(int fd, const Vector<String16>& args) override;
-    binder::Status setListener(const std::string& name, const sp<IDumpstateListener>& listener,
-                               bool getSectionDetails,
-                               sp<IDumpstateToken>* returned_token) override;
 
-    binder::Status startBugreport(int fd, const sp<IDumpstateListener>& listener,
-                                  const DumpstateOptions& options, int32_t* returned_id) override;
+    binder::Status preDumpUiData(const std::string& callingPackage) override;
+
+    binder::Status startBugreport(int32_t calling_uid, const std::string& calling_package,
+                                  android::base::unique_fd bugreport_fd,
+                                  android::base::unique_fd screenshot_fd, int bugreport_mode,
+                                  int bugreport_flags, const sp<IDumpstateListener>& listener,
+                                  bool is_screenshot_requested) override;
+
+    binder::Status retrieveBugreport(int32_t calling_uid,
+                                     const std::string& calling_package,
+                                     android::base::unique_fd bugreport_fd,
+                                     const std::string& bugreport_file,
+                                     const sp<IDumpstateListener>& listener)
+                                     override;
+
+    binder::Status cancelBugreport(int32_t calling_uid,
+                                   const std::string& calling_package) override;
 
   private:
-    Dumpstate& ds_;
+    // Dumpstate object which contains all the bugreporting logic.
+    // Note that dumpstate is a oneshot service, so this object is meant to be used at most for
+    // one bugreport.
+    // This service does not own this object.
+    Dumpstate* ds_;
+    int32_t calling_uid_;
+    std::string calling_package_;
     std::mutex lock_;
 };
 

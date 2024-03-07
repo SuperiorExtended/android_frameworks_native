@@ -20,7 +20,7 @@
 #pragma GCC diagnostic ignored "-Wunused-function"
 
 #include "jni.h"
-#include <nativehelper/JNIHelp.h>
+#include <nativehelper/JNIPlatformHelp.h>
 #include <android_runtime/AndroidRuntime.h>
 #include <android_runtime/android_view_Surface.h>
 #include <android_runtime/android_graphics_SurfaceTexture.h>
@@ -35,8 +35,6 @@
 #include <gui/Surface.h>
 
 #include <ui/ANativeObjectBase.h>
-
-static int initialized = 0;
 
 static jclass egldisplayClass;
 static jclass eglcontextClass;
@@ -104,6 +102,7 @@ fromEGLHandle(JNIEnv *_env, jmethodID mid, jobject obj) {
     if (obj == NULL){
         jniThrowException(_env, "java/lang/IllegalArgumentException",
                           "Object is set to null.");
+        return nullptr;
     }
 
     return reinterpret_cast<void*>(_env->CallLongMethod(obj, mid));

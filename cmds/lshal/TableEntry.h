@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef FRAMEWORK_NATIVE_CMDS_LSHAL_TABLE_ENTRY_H_
-#define FRAMEWORK_NATIVE_CMDS_LSHAL_TABLE_ENTRY_H_
+#pragma once
 
 #include <stdint.h>
 
@@ -33,22 +32,28 @@ namespace android {
 namespace lshal {
 
 using android::procpartition::Partition;
-using Pids = std::vector<int32_t>;
+using Pids = std::vector<pid_t>;
 
 enum class TableColumnType : unsigned int {
-    INTERFACE_NAME,
+    INTERFACE_NAME = 0,
     TRANSPORT,
     SERVER_PID,
-    SERVER_CMD,
     SERVER_ADDR,
-    CLIENT_PIDS,
-    CLIENT_CMDS,
     ARCH,
     THREADS,
     RELEASED,
     HASH,
     VINTF,
     SERVICE_STATUS,
+    CLIENT_PIDS,
+
+    // Not a real TableColumnType. Used to determine all TableColumnTypes.
+    LAST,
+
+    // Not included in all TableColumnTypes because they replace *PID(S) when the
+    // --cmdline option is set.
+    SERVER_CMD,
+    CLIENT_CMDS,
 };
 
 enum : unsigned int {
@@ -149,7 +154,7 @@ using TableEntryCompare = std::function<bool(const TableEntry &, const TableEntr
 
 class MergedTable {
 public:
-    MergedTable(std::vector<const Table*>&& tables) : mTables(std::move(tables)) {}
+    explicit MergedTable(std::vector<const Table*>&& tables) : mTables(std::move(tables)) {}
     TextTable createTextTable();
 private:
     std::vector<const Table*> mTables;
@@ -157,5 +162,3 @@ private:
 
 }  // namespace lshal
 }  // namespace android
-
-#endif  // FRAMEWORK_NATIVE_CMDS_LSHAL_TABLE_ENTRY_H_

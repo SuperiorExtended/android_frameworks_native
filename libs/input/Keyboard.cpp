@@ -16,19 +16,27 @@
 
 #define LOG_TAG "Keyboard"
 
+#include <limits.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <limits.h>
+#include <optional>
 
-#include <input/Keyboard.h>
-#include <input/InputEventLabels.h>
-#include <input/KeyLayoutMap.h>
-#include <input/KeyCharacterMap.h>
 #include <input/InputDevice.h>
+#include <input/InputEventLabels.h>
+#include <input/KeyCharacterMap.h>
+#include <input/KeyLayoutMap.h>
+#include <input/Keyboard.h>
+#include <log/log.h>
 #include <utils/Errors.h>
-#include <utils/Log.h>
 
 namespace android {
+
+static std::string getPath(const InputDeviceIdentifier& deviceIdentifier, const std::string& name,
+                           InputDeviceConfigurationFileType type) {
+    return name.empty()
+            ? getInputDeviceConfigurationFilePathByDeviceIdentifier(deviceIdentifier, type)
+            : getInputDeviceConfigurationFilePathByName(name, type);
+}
 
 // --- KeyMap ---
 
@@ -38,29 +46,29 @@ KeyMap::KeyMap() {
 KeyMap::~KeyMap() {
 }
 
-status_t KeyMap::load(const InputDeviceIdentifier& deviceIdenfifier,
+status_t KeyMap::load(const InputDeviceIdentifier& deviceIdentifier,
         const PropertyMap* deviceConfiguration) {
     // Use the configured key layout if available.
     if (deviceConfiguration) {
-        String8 keyLayoutName;
-        if (deviceConfiguration->tryGetProperty(String8("keyboard.layout"),
-                keyLayoutName)) {
-            status_t status = loadKeyLayout(deviceIdenfifier, keyLayoutName.c_str());
+        std::optional<std::string> keyLayoutName =
+                deviceConfiguration->getString("keyboard.layout");
+        if (keyLayoutName.has_value()) {
+            status_t status = loadKeyLayout(deviceIdentifier, *keyLayoutName);
             if (status == NAME_NOT_FOUND) {
                 ALOGE("Configuration for keyboard device '%s' requested keyboard layout '%s' but "
-                        "it was not found.",
-                        deviceIdenfifier.name.c_str(), keyLayoutName.string());
+                      "it was not found.",
+                      deviceIdentifier.name.c_str(), keyLayoutName->c_str());
             }
         }
 
-        String8 keyCharacterMapName;
-        if (deviceConfiguration->tryGetProperty(String8("keyboard.characterMap"),
-                keyCharacterMapName)) {
-            status_t status = loadKeyCharacterMap(deviceIdenfifier, keyCharacterMapName.c_str());
+        std::optional<std::string> keyCharacterMapName =
+                deviceConfiguration->getString("keyboard.characterMap");
+        if (keyCharacterMapName.has_value()) {
+            status_t status = loadKeyCharacterMap(deviceIdentifier, *keyCharacterMapName);
             if (status == NAME_NOT_FOUND) {
                 ALOGE("Configuration for keyboard device '%s' requested keyboard character "
-                        "map '%s' but it was not found.",
-                        deviceIdenfifier.name.c_str(), keyLayoutName.string());
+                      "map '%s' but it was not found.",
+                      deviceIdentifier.name.c_str(), keyCharacterMapName->c_str());
             }
         }
 
@@ -70,25 +78,25 @@ status_t KeyMap::load(const InputDeviceIdentifier& deviceIdenfifier,
     }
 
     // Try searching by device identifier.
-    if (probeKeyMap(deviceIdenfifier, "")) {
+    if (probeKeyMap(deviceIdentifier, "")) {
         return OK;
     }
 
     // Fall back on the Generic key map.
     // TODO Apply some additional heuristics here to figure out what kind of
     //      generic key map to use (US English, etc.) for typical external keyboards.
-    if (probeKeyMap(deviceIdenfifier, "Generic")) {
+    if (probeKeyMap(deviceIdentifier, "Generic")) {
         return OK;
     }
 
     // Try the Virtual key map as a last resort.
-    if (probeKeyMap(deviceIdenfifier, "Virtual")) {
+    if (probeKeyMap(deviceIdentifier, "Virtual")) {
         return OK;
     }
 
     // Give up!
     ALOGE("Could not determine key map for device '%s' and no default key maps were found!",
-            deviceIdenfifier.name.c_str());
+            deviceIdentifier.name.c_str());
     return NAME_NOT_FOUND;
 }
 
@@ -105,46 +113,51 @@ bool KeyMap::probeKeyMap(const InputDeviceIdentifier& deviceIdentifier,
 
 status_t KeyMap::loadKeyLayout(const InputDeviceIdentifier& deviceIdentifier,
         const std::string& name) {
-    std::string path(getPath(deviceIdentifier, name,
-            INPUT_DEVICE_CONFIGURATION_FILE_TYPE_KEY_LAYOUT));
+    std::string path(getPath(deviceIdentifier, name, InputDeviceConfigurationFileType::KEY_LAYOUT));
     if (path.empty()) {
         return NAME_NOT_FOUND;
     }
 
-    status_t status = KeyLayoutMap::load(path, &keyLayoutMap);
-    if (status) {
-        return status;
+    base::Result<std::shared_ptr<KeyLayoutMap>> ret = KeyLayoutMap::load(path);
+    if (ret.ok()) {
+        keyLayoutMap = *ret;
+        keyLayoutFile = path;
+        return OK;
     }
 
-    keyLayoutFile = path;
+    // Try to load fallback layout if the regular layout could not be loaded due to missing
+    // kernel modules
+    std::string fallbackPath(
+            getInputDeviceConfigurationFilePathByDeviceIdentifier(deviceIdentifier,
+                                                                  InputDeviceConfigurationFileType::
+                                                                          KEY_LAYOUT,
+                                                                  "_fallback"));
+    ret = KeyLayoutMap::load(fallbackPath);
+    if (!ret.ok()) {
+        return ret.error().code();
+    }
+    keyLayoutMap = *ret;
+    keyLayoutFile = fallbackPath;
     return OK;
 }
 
 status_t KeyMap::loadKeyCharacterMap(const InputDeviceIdentifier& deviceIdentifier,
         const std::string& name) {
-    std::string path = getPath(deviceIdentifier, name,
-            INPUT_DEVICE_CONFIGURATION_FILE_TYPE_KEY_CHARACTER_MAP);
+    std::string path =
+            getPath(deviceIdentifier, name, InputDeviceConfigurationFileType::KEY_CHARACTER_MAP);
     if (path.empty()) {
         return NAME_NOT_FOUND;
     }
 
-    status_t status = KeyCharacterMap::load(path,
-            KeyCharacterMap::FORMAT_BASE, &keyCharacterMap);
-    if (status) {
-        return status;
+    base::Result<std::shared_ptr<KeyCharacterMap>> ret =
+            KeyCharacterMap::load(path, KeyCharacterMap::Format::BASE);
+    if (!ret.ok()) {
+        return ret.error().code();
     }
-
+    keyCharacterMap = *ret;
     keyCharacterMapFile = path;
     return OK;
 }
-
-std::string KeyMap::getPath(const InputDeviceIdentifier& deviceIdentifier,
-        const std::string& name, InputDeviceConfigurationFileType type) {
-    return name.empty()
-            ? getInputDeviceConfigurationFilePathByDeviceIdentifier(deviceIdentifier, type)
-            : getInputDeviceConfigurationFilePathByName(name, type);
-}
-
 
 // --- Global functions ---
 
@@ -152,24 +165,20 @@ bool isKeyboardSpecialFunction(const PropertyMap* config) {
     if (config == nullptr) {
         return false;
     }
-    bool isSpecialFunction = false;
-    config->tryGetProperty(String8("keyboard.specialFunction"), isSpecialFunction);
-    return isSpecialFunction;
+    return config->getBool("keyboard.specialFunction").value_or(false);
 }
 
 bool isEligibleBuiltInKeyboard(const InputDeviceIdentifier& deviceIdentifier,
         const PropertyMap* deviceConfiguration, const KeyMap* keyMap) {
     // TODO: remove the third OR statement (SPECIAL_FUNCTION) in Q
-    if (!keyMap->haveKeyCharacterMap() || isKeyboardSpecialFunction(deviceConfiguration)
-            || keyMap->keyCharacterMap->getKeyboardType()
-                    == KeyCharacterMap::KEYBOARD_TYPE_SPECIAL_FUNCTION) {
+    if (!keyMap->haveKeyCharacterMap() || isKeyboardSpecialFunction(deviceConfiguration) ||
+        keyMap->keyCharacterMap->getKeyboardType() ==
+                KeyCharacterMap::KeyboardType::SPECIAL_FUNCTION) {
         return false;
     }
 
     if (deviceConfiguration) {
-        bool builtIn = false;
-        if (deviceConfiguration->tryGetProperty(String8("keyboard.builtIn"), builtIn)
-                && builtIn) {
+        if (deviceConfiguration->getBool("keyboard.builtIn").value_or(false)) {
             return true;
         }
     }

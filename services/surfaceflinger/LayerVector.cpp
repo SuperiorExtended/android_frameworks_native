@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wconversion"
+
 #include "LayerVector.h"
 #include "Layer.h"
 
@@ -38,13 +42,11 @@ int LayerVector::do_compare(const void* lhs, const void* rhs) const
     const auto& l = *reinterpret_cast<const sp<Layer>*>(lhs);
     const auto& r = *reinterpret_cast<const sp<Layer>*>(rhs);
 
-    const auto& lState =
-            (mStateSet == StateSet::Current) ? l->getCurrentState() : l->getDrawingState();
-    const auto& rState =
-            (mStateSet == StateSet::Current) ? r->getCurrentState() : r->getDrawingState();
+    const auto& lState = l->getDrawingState();
+    const auto& rState = r->getDrawingState();
 
-    uint32_t ls = lState.layerStack;
-    uint32_t rs = rState.layerStack;
+    const auto ls = lState.layerStack;
+    const auto rs = rState.layerStack;
     if (ls != rs)
         return (ls > rs) ? 1 : -1;
 
@@ -62,9 +64,8 @@ int LayerVector::do_compare(const void* lhs, const void* rhs) const
 void LayerVector::traverseInZOrder(StateSet stateSet, const Visitor& visitor) const {
     for (size_t i = 0; i < size(); i++) {
         const auto& layer = (*this)[i];
-        auto& state = (stateSet == StateSet::Current) ? layer->getCurrentState()
-                                                      : layer->getDrawingState();
-        if (state.zOrderRelativeOf != nullptr) {
+        auto& state = layer->getDrawingState();
+        if (state.isRelativeOf) {
             continue;
         }
         layer->traverseInZOrder(stateSet, visitor);
@@ -74,12 +75,22 @@ void LayerVector::traverseInZOrder(StateSet stateSet, const Visitor& visitor) co
 void LayerVector::traverseInReverseZOrder(StateSet stateSet, const Visitor& visitor) const {
     for (auto i = static_cast<int64_t>(size()) - 1; i >= 0; i--) {
         const auto& layer = (*this)[i];
-        auto& state = (stateSet == StateSet::Current) ? layer->getCurrentState()
-                                                      : layer->getDrawingState();
-        if (state.zOrderRelativeOf != nullptr) {
+        auto& state = layer->getDrawingState();
+        if (state.isRelativeOf) {
             continue;
         }
         layer->traverseInReverseZOrder(stateSet, visitor);
      }
 }
+
+void LayerVector::traverse(const Visitor& visitor) const {
+    for (auto i = static_cast<int64_t>(size()) - 1; i >= 0; i--) {
+        const auto& layer = (*this)[i];
+        layer->traverse(mStateSet, visitor);
+    }
+}
+
 } // namespace android
+
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic pop // ignored "-Wconversion"

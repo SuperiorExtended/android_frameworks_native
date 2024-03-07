@@ -64,6 +64,8 @@ typedef enum OMX_INDEXEXTTYPE {
     OMX_IndexParamAudioAndroidEac3,                 /**< reference: OMX_AUDIO_PARAM_ANDROID_EAC3TYPE */
     OMX_IndexParamAudioProfileQuerySupported,       /**< reference: OMX_AUDIO_PARAM_ANDROID_PROFILETYPE */
     OMX_IndexParamAudioAndroidAacDrcPresentation,   /**< reference: OMX_AUDIO_PARAM_ANDROID_AACDRCPRESENTATIONTYPE */
+    OMX_IndexParamAudioAndroidAc4,                  /**< reference: OMX_AUDIO_PARAM_ANDROID_AC4TYPE */
+    OMX_IndexConfigAudioPresentation,               /**< reference: OMX_AUDIO_CONFIG_ANDROID_AUDIOPRESENTATION */
     OMX_IndexExtAudioEndUnused,
 
     /* Image parameters and configurations */
@@ -87,6 +89,7 @@ typedef enum OMX_INDEXEXTTYPE {
     OMX_IndexParamVideoVp9,                         /**< reference: OMX_VIDEO_PARAM_VP9TYPE */
     OMX_IndexParamVideoAndroidVp9Encoder,           /**< reference: OMX_VIDEO_PARAM_ANDROID_VP9ENCODERTYPE */
     OMX_IndexParamVideoAndroidImageGrid,            /**< reference: OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE */
+    OMX_IndexParamVideoAndroidRequiresSwRenderer,   /**< reference: OMX_PARAM_U32TYPE */
     OMX_IndexExtVideoEndUnused,
 
     /* Image & Video common configurations */
@@ -99,6 +102,10 @@ typedef enum OMX_INDEXEXTTYPE {
     OMX_IndexConfigOperatingRate,                   /**< reference: OMX_PARAM_U32TYPE in Q16 format for video and in Hz for audio */
     OMX_IndexParamConsumerUsageBits,                /**< reference: OMX_PARAM_U32TYPE */
     OMX_IndexConfigLatency,                         /**< reference: OMX_PARAM_U32TYPE */
+    OMX_IndexConfigLowLatency,                      /**< reference: OMX_CONFIG_BOOLEANTYPE */
+    OMX_IndexConfigAndroidTunnelPeek,               /**< reference: OMX_CONFIG_BOOLEANTYPE */
+    OMX_IndexConfigAndroidTunnelPeekLegacyMode,     /**< reference: OMX_CONFIG_BOOLEANTYPE */
+    OMX_IndexParamConsumerUsageBits64,              /**< reference: OMX_PARAM_U64TYPE */
     OMX_IndexExtOtherEndUnused,
 
     /* Time configurations */

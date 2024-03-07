@@ -31,7 +31,7 @@ class BufferQueueCore;
 class BufferQueueConsumer : public BnGraphicBufferConsumer {
 
 public:
-    BufferQueueConsumer(const sp<BufferQueueCore>& core);
+    explicit BufferQueueConsumer(const sp<BufferQueueCore>& core);
     ~BufferQueueConsumer() override;
 
     // acquireBuffer attempts to acquire ownership of the next pending buffer in
@@ -170,6 +170,13 @@ public:
     virtual status_t consumerDisconnect() { return disconnect(); }
 
     // End functions required for backwards compatibility
+
+    // Value used to determine if present time is valid.
+    constexpr static int MAX_REASONABLE_NSEC = 1'000'000'000ULL; // 1 second
+
+    // This allows the consumer to acquire an additional buffer if that buffer is not droppable and
+    // will eventually be released or acquired by the consumer.
+    void setAllowExtraAcquire(bool /* allow */);
 
 private:
     sp<BufferQueueCore> mCore;

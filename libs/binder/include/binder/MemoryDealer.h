@@ -14,9 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_MEMORY_DEALER_H
-#define ANDROID_MEMORY_DEALER_H
-
+#pragma once
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -34,11 +32,10 @@ class SimpleBestFitAllocator;
 class MemoryDealer : public RefBase
 {
 public:
-    MemoryDealer(size_t size, const char* name = nullptr,
+    explicit MemoryDealer(size_t size, const char* name = nullptr,
             uint32_t flags = 0 /* or bits such as MemoryHeapBase::READ_ONLY */ );
 
     virtual sp<IMemory> allocate(size_t size);
-    virtual void        deallocate(size_t offset);
     virtual void        dump(const char* what) const;
 
     // allocations are aligned to some value. return that value so clients can account for it.
@@ -50,6 +47,8 @@ protected:
     virtual ~MemoryDealer();
 
 private:
+    friend class Allocation;
+    virtual void                deallocate(size_t offset);
     const sp<IMemoryHeap>&      heap() const;
     SimpleBestFitAllocator*     allocator() const;
 
@@ -59,6 +58,4 @@ private:
 
 
 // ----------------------------------------------------------------------------
-}; // namespace android
-
-#endif // ANDROID_MEMORY_DEALER_H
+} // namespace android

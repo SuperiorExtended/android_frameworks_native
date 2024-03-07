@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <android-base/stringprintf.h>
 #include <system/graphics.h>
 #include <ui/Rect.h>
 
@@ -69,6 +70,14 @@ Rect& Rect::offsetBy(int32_t x, int32_t y) {
     top += y;
     right += x;
     bottom += y;
+    return *this;
+}
+
+Rect& Rect::inset(int32_t _left, int32_t _top, int32_t _right, int32_t _bottom) {
+    this->left += _left;
+    this->top += _top;
+    this->right -= _right;
+    this->bottom -= _bottom;
     return *this;
 }
 
@@ -139,6 +148,15 @@ Rect Rect::reduce(const Rect& exclude) const {
     }
 
     return result;
+}
+
+std::string to_string(const android::Rect& rect) {
+    return android::base::StringPrintf("Rect(%d, %d, %d, %d)", rect.left, rect.top, rect.right,
+                                       rect.bottom);
+}
+
+void PrintTo(const Rect& rect, ::std::ostream* os) {
+    *os << to_string(rect);
 }
 
 }; // namespace android

@@ -15,6 +15,7 @@
  */
 
 #include <gui/HdrMetadata.h>
+#include <limits>
 
 namespace android {
 
@@ -25,6 +26,10 @@ size_t HdrMetadata::getFlattenedSize() const {
     }
     if (validTypes & CTA861_3) {
         size += sizeof(cta8613);
+    }
+    if (validTypes & HDR10PLUS) {
+        size += sizeof(uint32_t);
+        size += hdr10plus.size() * sizeof(hdr10plus[0]);
     }
     return size;
 }
@@ -40,6 +45,13 @@ status_t HdrMetadata::flatten(void* buffer, size_t size) const {
     }
     if (validTypes & CTA861_3) {
         FlattenableUtils::write(buffer, size, cta8613);
+    }
+    if (validTypes & HDR10PLUS) {
+        uint32_t metadataSize = hdr10plus.size();
+        FlattenableUtils::write(buffer, size, metadataSize);
+        size_t metadataSizeinByte = metadataSize * sizeof(hdr10plus[0]);
+        memcpy(buffer, hdr10plus.data(), metadataSizeinByte);
+        FlattenableUtils::advance(buffer, size, metadataSizeinByte);
     }
 
     return NO_ERROR;
@@ -61,6 +73,23 @@ status_t HdrMetadata::unflatten(void const* buffer, size_t size) {
             return NO_MEMORY;
         }
         FlattenableUtils::read(buffer, size, cta8613);
+    }
+    if (validTypes & HDR10PLUS) {
+        if (size < sizeof(uint32_t)) {
+            return NO_MEMORY;
+        }
+
+        uint32_t metadataSize;
+        FlattenableUtils::read(buffer, size, metadataSize);
+
+        size_t metadataSizeinByte = metadataSize * sizeof(hdr10plus[0]);
+        if (size < metadataSizeinByte) {
+            return NO_MEMORY;
+        }
+
+        hdr10plus.resize(metadataSize);
+        memcpy(hdr10plus.data(), buffer, metadataSizeinByte);
+        FlattenableUtils::advance(buffer, size, metadataSizeinByte);
     }
 
     return NO_ERROR;
@@ -89,6 +118,10 @@ bool HdrMetadata::operator==(const HdrMetadata& rhs) const {
             cta8613.maxContentLightLevel != rhs.cta8613.maxContentLightLevel) {
             return false;
         }
+    }
+
+    if ((validTypes & HDR10PLUS) == HDR10PLUS) {
+        if (hdr10plus != rhs.hdr10plus) return false;
     }
 
     return true;

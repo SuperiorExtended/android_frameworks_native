@@ -51,7 +51,7 @@ class BufferItemConsumerTest : public ::testing::Test {
         mBFL = new BufferFreedListener(this);
         mBIC->setBufferFreedListener(mBFL);
 
-        sp<IProducerListener> producerListener = new DummyProducerListener();
+        sp<IProducerListener> producerListener = new StubProducerListener();
         IGraphicBufferProducer::QueueBufferOutput bufferOutput;
         ASSERT_EQ(NO_ERROR,
                   mProducer->connect(producerListener, NATIVE_WINDOW_API_CPU,
@@ -68,7 +68,7 @@ class BufferItemConsumerTest : public ::testing::Test {
     void HandleBufferFreed() {
         std::lock_guard<std::mutex> lock(mMutex);
         mFreedBufferCount++;
-        ALOGV("HandleBufferFreed, mFreedBufferCount=%d", mFreedBufferCount);
+        ALOGD("HandleBufferFreed, mFreedBufferCount=%d", mFreedBufferCount);
     }
 
     void DequeueBuffer(int* outSlot) {
@@ -80,7 +80,7 @@ class BufferItemConsumerTest : public ::testing::Test {
                                                 nullptr, nullptr);
         ASSERT_GE(ret, 0);
 
-        ALOGV("dequeueBuffer: slot=%d", slot);
+        ALOGD("dequeueBuffer: slot=%d", slot);
         if (ret & IGraphicBufferProducer::BUFFER_NEEDS_REALLOCATION) {
             ret = mProducer->requestBuffer(slot, &mBuffers[slot]);
             ASSERT_EQ(NO_ERROR, ret);
@@ -89,7 +89,7 @@ class BufferItemConsumerTest : public ::testing::Test {
     }
 
     void QueueBuffer(int slot) {
-        ALOGV("enqueueBuffer: slot=%d", slot);
+        ALOGD("enqueueBuffer: slot=%d", slot);
         IGraphicBufferProducer::QueueBufferInput bufferInput(
             0ULL, true, HAL_DATASPACE_UNKNOWN, Rect::INVALID_RECT,
             NATIVE_WINDOW_SCALING_MODE_FREEZE, 0, Fence::NO_FENCE);
@@ -104,12 +104,12 @@ class BufferItemConsumerTest : public ::testing::Test {
         status_t ret = mBIC->acquireBuffer(&buffer, 0, false);
         ASSERT_EQ(NO_ERROR, ret);
 
-        ALOGV("acquireBuffer: slot=%d", buffer.mSlot);
+        ALOGD("acquireBuffer: slot=%d", buffer.mSlot);
         *outSlot = buffer.mSlot;
     }
 
     void ReleaseBuffer(int slot) {
-        ALOGV("releaseBuffer: slot=%d", slot);
+        ALOGD("releaseBuffer: slot=%d", slot);
         BufferItem buffer;
         buffer.mSlot = slot;
         buffer.mGraphicBuffer = mBuffers[slot];
@@ -131,7 +131,7 @@ class BufferItemConsumerTest : public ::testing::Test {
 // Test that detaching buffer from consumer side triggers onBufferFreed.
 TEST_F(BufferItemConsumerTest, TriggerBufferFreed_DetachBufferFromConsumer) {
     int slot;
-    // Producer: generate a dummy buffer.
+    // Producer: generate a placeholder buffer.
     DequeueBuffer(&slot);
     QueueBuffer(slot);
 

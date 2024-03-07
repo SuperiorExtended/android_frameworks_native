@@ -16,6 +16,8 @@
 
 #include "SensorList.h"
 
+#include <android/util/ProtoOutputStream.h>
+#include <frameworks/base/core/proto/android/service/sensor_service.proto.h>
 #include <hardware/sensors.h>
 #include <utils/String8.h>
 
@@ -26,13 +28,13 @@ namespace SensorServiceUtil {
 
 const Sensor SensorList::mNonSensor = Sensor("unknown");
 
-bool SensorList::add(
-        int handle, SensorInterface* si, bool isForDebug, bool isVirtual) {
+bool SensorList::add(int handle, std::shared_ptr<SensorInterface> si, bool isForDebug,
+                     bool isVirtual, int deviceId) {
     std::lock_guard<std::mutex> lk(mLock);
     if (handle == si->getSensor().getHandle() &&
         mUsedHandle.insert(handle).second) {
         // will succeed as the mUsedHandle does not have this handle
-        mHandleMap.emplace(handle, Entry(si, isForDebug, isVirtual));
+        mHandleMap.emplace(handle, Entry(std::move(si), isForDebug, isVirtual, deviceId));
         return true;
     }
     // handle exist already or handle mismatch
@@ -55,11 +57,17 @@ String8 SensorList::getName(int handle) const {
             mNonSensor.getName());
 }
 
-sp<SensorInterface> SensorList::getInterface(int handle) const {
-    return getOne<sp<SensorInterface>>(
-            handle, [] (const Entry& e) -> sp<SensorInterface> {return e.si;}, nullptr);
+String8 SensorList::getStringType(int handle) const {
+    return getOne<String8>(
+            handle, [] (const Entry& e) -> String8 {return e.si->getSensor().getStringType();},
+            mNonSensor.getStringType());
 }
 
+std::shared_ptr<SensorInterface> SensorList::getInterface(int handle) const {
+    return getOne<std::shared_ptr<SensorInterface>>(
+            handle, [] (const Entry& e) -> std::shared_ptr<SensorInterface> {return e.si;},
+            nullptr);
+}
 
 bool SensorList::isNewHandle(int handle) const {
     std::lock_guard<std::mutex> lk(mLock);
@@ -71,7 +79,8 @@ const Vector<Sensor> SensorList::getUserSensors() const {
     Vector<Sensor> sensors;
     forEachEntry(
             [&sensors] (const Entry& e) -> bool {
-                if (!e.isForDebug && !e.si->getSensor().isDynamicSensor()) {
+                if (!e.isForDebug && !e.si->getSensor().isDynamicSensor()
+                    && e.deviceId == RuntimeSensor::DEFAULT_DEVICE_ID) {
                     sensors.add(e.si->getSensor());
                 }
                 return true;
@@ -84,7 +93,8 @@ const Vector<Sensor> SensorList::getUserDebugSensors() const {
     Vector<Sensor> sensors;
     forEachEntry(
             [&sensors] (const Entry& e) -> bool {
-                if (!e.si->getSensor().isDynamicSensor()) {
+                if (!e.si->getSensor().isDynamicSensor()
+                    && e.deviceId == RuntimeSensor::DEFAULT_DEVICE_ID) {
                     sensors.add(e.si->getSensor());
                 }
                 return true;
@@ -97,7 +107,8 @@ const Vector<Sensor> SensorList::getDynamicSensors() const {
     Vector<Sensor> sensors;
     forEachEntry(
             [&sensors] (const Entry& e) -> bool {
-                if (!e.isForDebug && e.si->getSensor().isDynamicSensor()) {
+                if (!e.isForDebug && e.si->getSensor().isDynamicSensor()
+                     && e.deviceId == RuntimeSensor::DEFAULT_DEVICE_ID) {
                     sensors.add(e.si->getSensor());
                 }
                 return true;
@@ -110,7 +121,20 @@ const Vector<Sensor> SensorList::getVirtualSensors() const {
     Vector<Sensor> sensors;
     forEachEntry(
             [&sensors] (const Entry& e) -> bool {
-                if (e.isVirtual) {
+                if (e.isVirtual && e.deviceId == RuntimeSensor::DEFAULT_DEVICE_ID) {
+                    sensors.add(e.si->getSensor());
+                }
+                return true;
+            });
+    return sensors;
+}
+
+const Vector<Sensor> SensorList::getRuntimeSensors(int deviceId) const {
+    // lock in forEachEntry
+    Vector<Sensor> sensors;
+    forEachEntry(
+            [&sensors, deviceId] (const Entry& e) -> bool {
+                if (!e.isForDebug && e.deviceId == deviceId) {
                     sensors.add(e.si->getSensor());
                 }
                 return true;
@@ -201,6 +225,64 @@ std::string SensorList::dump() const {
             return true;
         });
     return std::string(result.string());
+}
+
+/**
+ * Dump debugging information as android.service.SensorListProto protobuf message using
+ * ProtoOutputStream.
+ *
+ * See proto definition and some notes about ProtoOutputStream in
+ * frameworks/base/core/proto/android/service/sensor_service.proto
+ */
+void SensorList::dump(util::ProtoOutputStream* proto) const {
+    using namespace service::SensorListProto;
+    using namespace service::SensorListProto::SensorProto;
+
+    forEachSensor([&proto] (const Sensor& s) -> bool {
+        const uint64_t token = proto->start(SENSORS);
+        proto->write(HANDLE, s.getHandle());
+        proto->write(NAME, std::string(s.getName().string()));
+        proto->write(VENDOR, std::string(s.getVendor().string()));
+        proto->write(VERSION, s.getVersion());
+        proto->write(STRING_TYPE, std::string(s.getStringType().string()));
+        proto->write(TYPE, s.getType());
+        proto->write(REQUIRED_PERMISSION, std::string(s.getRequiredPermission().size() ?
+                s.getRequiredPermission().string() : ""));
+        proto->write(FLAGS, int(s.getFlags()));
+        switch (s.getReportingMode()) {
+            case AREPORTING_MODE_CONTINUOUS:
+                proto->write(REPORTING_MODE, RM_CONTINUOUS);
+                break;
+            case AREPORTING_MODE_ON_CHANGE:
+                proto->write(REPORTING_MODE, RM_ON_CHANGE);
+                break;
+            case AREPORTING_MODE_ONE_SHOT:
+                proto->write(REPORTING_MODE, RM_ONE_SHOT);
+                break;
+            case AREPORTING_MODE_SPECIAL_TRIGGER:
+                proto->write(REPORTING_MODE, RM_SPECIAL_TRIGGER);
+                break;
+            default:
+                proto->write(REPORTING_MODE, RM_UNKNOWN);
+        }
+        proto->write(MAX_DELAY_US, s.getMaxDelay());
+        proto->write(MIN_DELAY_US, s.getMinDelay());
+        proto->write(FIFO_MAX_EVENT_COUNT, int(s.getFifoMaxEventCount()));
+        proto->write(FIFO_RESERVED_EVENT_COUNT, int(s.getFifoReservedEventCount()));
+        proto->write(IS_WAKEUP, s.isWakeUpSensor());
+        proto->write(DATA_INJECTION_SUPPORTED, s.isDataInjectionSupported());
+        proto->write(IS_DYNAMIC, s.isDynamicSensor());
+        proto->write(HAS_ADDITIONAL_INFO, s.hasAdditionalInfo());
+        proto->write(HIGHEST_RATE_LEVEL, s.getHighestDirectReportRateLevel());
+        proto->write(ASHMEM, s.isDirectChannelTypeSupported(SENSOR_DIRECT_MEM_TYPE_ASHMEM));
+        proto->write(GRALLOC, s.isDirectChannelTypeSupported(SENSOR_DIRECT_MEM_TYPE_GRALLOC));
+        proto->write(MIN_VALUE, s.getMinValue());
+        proto->write(MAX_VALUE, s.getMaxValue());
+        proto->write(RESOLUTION, s.getResolution());
+        proto->write(POWER_USAGE, s.getPowerUsage());
+        proto->end(token);
+        return true;
+    });
 }
 
 SensorList::~SensorList() {

@@ -14,12 +14,16 @@
  * limitations under the License.
  */
 
+#define ATRACE_TAG ATRACE_TAG_GRAPHICS
+
 #include "GLImage.h"
 
 #include <vector>
 
+#include <gui/DebugEGLImageTracker.h>
 #include <log/log.h>
-#include "GLES20RenderEngine.h"
+#include <utils/Trace.h>
+#include "GLESRenderEngine.h"
 #include "GLExtensions.h"
 
 namespace android {
@@ -43,17 +47,19 @@ static std::vector<EGLint> buildAttributeList(bool isProtected) {
     return attrs;
 }
 
-GLImage::GLImage(const GLES20RenderEngine& engine) : mEGLDisplay(engine.getEGLDisplay()) {}
+GLImage::GLImage(const GLESRenderEngine& engine) : mEGLDisplay(engine.getEGLDisplay()) {}
 
 GLImage::~GLImage() {
     setNativeWindowBuffer(nullptr, false);
 }
 
 bool GLImage::setNativeWindowBuffer(ANativeWindowBuffer* buffer, bool isProtected) {
+    ATRACE_CALL();
     if (mEGLImage != EGL_NO_IMAGE_KHR) {
         if (!eglDestroyImageKHR(mEGLDisplay, mEGLImage)) {
             ALOGE("failed to destroy image: %#x", eglGetError());
         }
+        DEBUG_EGL_IMAGE_TRACKER_DESTROY();
         mEGLImage = EGL_NO_IMAGE_KHR;
     }
 
@@ -65,6 +71,8 @@ bool GLImage::setNativeWindowBuffer(ANativeWindowBuffer* buffer, bool isProtecte
             ALOGE("failed to create EGLImage: %#x", eglGetError());
             return false;
         }
+        DEBUG_EGL_IMAGE_TRACKER_CREATE();
+        mProtected = isProtected;
     }
 
     return true;

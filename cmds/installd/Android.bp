@@ -1,3 +1,12 @@
+package {
+    // See: http://go/android-license-faq
+    // A large-scale-change added 'default_applicable_licenses' to import
+    // all of the 'license_kinds' from "frameworks_native_license"
+    // to get the below license kinds:
+    //   SPDX-license-identifier-Apache-2.0
+    default_applicable_licenses: ["frameworks_native_license"],
+}
+
 cc_defaults {
     name: "installd_defaults",
 
@@ -13,15 +22,20 @@ cc_defaults {
     srcs: [
         "CacheItem.cpp",
         "CacheTracker.cpp",
+        "CrateManager.cpp",
         "InstalldNativeService.cpp",
         "QuotaUtils.cpp",
+        "SysTrace.cpp",
         "dexopt.cpp",
+        "execv_helper.cpp",
         "globals.cpp",
+        "restorable_file.cpp",
+        "run_dex2oat.cpp",
+        "unique_file.cpp",
         "utils.cpp",
+        "utils_default.cpp",
+        "view_compiler.cpp",
         ":installd_aidl",
-    ],
-    header_libs: [
-        "dex2oat_headers",
     ],
     shared_libs: [
         "libbase",
@@ -30,8 +44,18 @@ cc_defaults {
         "libcutils",
         "liblog",
         "liblogwrap",
+        "libprocessgroup",
         "libselinux",
         "libutils",
+        "libziparchive",
+        "server_configurable_flags",
+    ],
+    static_libs: [
+        "libasync_safe",
+        "libext2_uuid",
+    ],
+    export_shared_lib_headers: [
+        "libbinder",
     ],
 
     product_variables: {
@@ -49,8 +73,6 @@ cc_defaults {
         },
     },
 
-    clang: true,
-
     tidy: true,
     tidy_checks: [
         "-*",
@@ -58,8 +80,9 @@ cc_defaults {
         "cert-*",
         "-cert-err58-cpp",
     ],
-    tidy_flags: [
-        "-warnings-as-errors=clang-analyzer-security*,cert-*"
+    tidy_checks_as_errors: [
+        "clang-analyzer-security*",
+        "cert-*",
     ],
 }
 
@@ -98,6 +121,30 @@ cc_library_headers {
 }
 
 //
+// Unit tests
+//
+
+cc_test_host {
+    name: "run_dex2oat_test",
+    test_suites: ["general-tests"],
+    srcs: [
+        "run_dex2oat_test.cpp",
+        "run_dex2oat.cpp",
+        "unique_file.cpp",
+        "execv_helper.cpp",
+    ],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
+    shared_libs: [
+        "libbase",
+        "server_configurable_flags",
+    ],
+    test_config: "run_dex2oat_test.xml",
+}
+
+//
 // Executable
 //
 
@@ -124,30 +171,42 @@ cc_binary {
             ],
         },
     },
+
+    // Needs to be wherever installd is as it's execed by
+    // installd.
+    required: ["migrate_legacy_obb_data"],
 }
 
 // OTA chroot tool
 
 cc_binary {
     name: "otapreopt_chroot",
+    defaults: ["libapexd-deps"],
     cflags: [
         "-Wall",
         "-Werror",
     ],
-    clang: true,
 
-    srcs: ["otapreopt_chroot.cpp"],
+    srcs: [
+        "otapreopt_chroot.cpp",
+        "otapreopt_utils.cpp",
+    ],
     shared_libs: [
         "libbase",
         "liblog",
+        "libutils",
+    ],
+    required: [
+        "apexd",
     ],
 }
 
 filegroup {
     name: "installd_aidl",
     srcs: [
-        "binder/android/os/IInstalld.aidl",
+        "binder/**/*.aidl",
     ],
+    path: "binder",
 }
 
 //
@@ -157,7 +216,7 @@ cc_library_static {
     name: "libotapreoptparameters",
     cflags: [
         "-Wall",
-        "-Werror"
+        "-Werror",
     ],
 
     srcs: ["otapreopt_parameters.cpp"],
@@ -168,6 +227,7 @@ cc_library_static {
         "libbase",
         "libcutils",
         "liblog",
+        "libprocessgroup",
         "libutils",
     ],
 }
@@ -180,22 +240,28 @@ cc_binary {
     name: "otapreopt",
     cflags: [
         "-Wall",
-        "-Werror"
+        "-Werror",
     ],
 
     srcs: [
         "dexopt.cpp",
+        "execv_helper.cpp",
         "globals.cpp",
         "otapreopt.cpp",
+        "otapreopt_utils.cpp",
+        "restorable_file.cpp",
+        "run_dex2oat.cpp",
+        "unique_file.cpp",
         "utils.cpp",
+        "utils_default.cpp",
+        "view_compiler.cpp",
     ],
 
-    header_libs: ["dex2oat_headers"],
-
     static_libs: [
-        "libartimagevalues",
+        "libasync_safe",
         "libdiskusage",
         "libotapreoptparameters",
+        "libext2_uuid",
     ],
 
     shared_libs: [
@@ -204,7 +270,36 @@ cc_binary {
         "libcutils",
         "liblog",
         "liblogwrap",
+        "libprocessgroup",
         "libselinux",
         "libutils",
+        "libziparchive",
+        "server_configurable_flags",
     ],
+}
+
+// OTA slot script
+sh_binary {
+    name: "otapreopt_slot",
+    src: "otapreopt_slot.sh",
+    init_rc: ["otapreopt.rc"],
+}
+
+// OTA postinstall script
+sh_binary {
+    name: "otapreopt_script",
+    src: "otapreopt_script.sh",
+    // Let this depend on otapreopt, the chroot tool and the slot script,
+    // so we just have to mention one in a configuration.
+    required: [
+        "otapreopt",
+        "otapreopt_chroot",
+        "otapreopt_slot",
+    ],
+}
+
+// Script to migrate legacy obb data.
+sh_binary {
+    name: "migrate_legacy_obb_data",
+    src: "migrate_legacy_obb_data.sh",
 }

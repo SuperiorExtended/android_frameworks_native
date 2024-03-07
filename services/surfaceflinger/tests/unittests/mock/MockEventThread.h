@@ -20,21 +20,37 @@
 
 #include "Scheduler/EventThread.h"
 
-namespace android {
-namespace mock {
+namespace android::mock {
 
 class EventThread : public android::EventThread {
 public:
+    static constexpr auto kCallingUid = static_cast<uid_t>(0);
+
     EventThread();
     ~EventThread() override;
 
-    MOCK_CONST_METHOD0(createEventConnection, sp<BnDisplayEventConnection>());
-    MOCK_METHOD0(onScreenReleased, void());
-    MOCK_METHOD0(onScreenAcquired, void());
-    MOCK_METHOD2(onHotplugReceived, void(DisplayType, bool));
-    MOCK_CONST_METHOD1(dump, void(String8&));
-    MOCK_METHOD1(setPhaseOffset, void(nsecs_t phaseOffset));
+    MOCK_METHOD(sp<EventThreadConnection>, createEventConnection,
+                (ResyncCallback, EventRegistrationFlags), (const, override));
+    MOCK_METHOD(void, enableSyntheticVsync, (bool), (override));
+    MOCK_METHOD(void, onHotplugReceived, (PhysicalDisplayId, bool), (override));
+    MOCK_METHOD(void, onModeChanged, (const scheduler::FrameRateMode&), (override));
+    MOCK_METHOD(void, onFrameRateOverridesChanged,
+                (PhysicalDisplayId, std::vector<FrameRateOverride>), (override));
+    MOCK_METHOD(void, dump, (std::string&), (const, override));
+    MOCK_METHOD(void, setDuration,
+                (std::chrono::nanoseconds workDuration, std::chrono::nanoseconds readyDuration),
+                (override));
+    MOCK_METHOD(status_t, registerDisplayEventConnection,
+                (const sp<android::EventThreadConnection>&), (override));
+    MOCK_METHOD(void, setVsyncRate, (uint32_t, const sp<android::EventThreadConnection>&),
+                (override));
+    MOCK_METHOD(void, requestNextVsync, (const sp<android::EventThreadConnection>&), (override));
+    MOCK_METHOD(VsyncEventData, getLatestVsyncEventData,
+                (const sp<android::EventThreadConnection>&), (const, override));
+    MOCK_METHOD(void, requestLatestConfig, (const sp<android::EventThreadConnection>&));
+    MOCK_METHOD(void, pauseVsyncCallback, (bool));
+    MOCK_METHOD(size_t, getEventThreadConnectionCount, (), (override));
+    MOCK_METHOD(void, onNewVsyncSchedule, (std::shared_ptr<scheduler::VsyncSchedule>), (override));
 };
 
-} // namespace mock
-} // namespace android
+} // namespace android::mock

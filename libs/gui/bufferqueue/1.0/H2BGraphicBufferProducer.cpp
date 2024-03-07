@@ -725,8 +725,7 @@ inline status_t flatten(HGraphicBufferProducer::FrameEventsDelta const& t,
         std::vector<native_handle_t*>* nh,
         void*& buffer, size_t& size, int*& fds, size_t numFds) {
     // Check that t.index is within a valid range.
-    if (t.index >= static_cast<uint32_t>(FrameEventHistory::MAX_FRAME_HISTORY)
-            || t.index > std::numeric_limits<uint8_t>::max()) {
+    if (t.index > UINT8_MAX || t.index < 0) {
         return BAD_VALUE;
     }
 
@@ -829,7 +828,7 @@ inline status_t flatten(
         HGraphicBufferProducer::FrameEventHistoryDelta const& t,
         std::vector<std::vector<native_handle_t*> >* nh,
         void*& buffer, size_t& size, int*& fds, size_t& numFds) {
-    if (t.deltas.size() > ::android::FrameEventHistory::MAX_FRAME_HISTORY) {
+    if (t.deltas.size() > UINT8_MAX) {
         return BAD_VALUE;
     }
     if (size < getFlattenedSize(t)) {
@@ -901,7 +900,7 @@ inline bool convertTo(
     int const* constFds = static_cast<int const*>(baseFds.get());
     numFds = baseNumFds;
     if (l->unflatten(constBuffer, size, constFds, numFds) != NO_ERROR) {
-        for (auto nhA : nhAA) {
+        for (const auto& nhA : nhAA) {
             for (auto nh : nhA) {
                 if (nh != nullptr) {
                     native_handle_close(nh);
@@ -912,8 +911,8 @@ inline bool convertTo(
         return false;
     }
 
-    for (auto nhA : nhAA) {
-        for (auto nh : nhA) {
+    for (const auto& nhA : nhAA) {
+        for (const auto& nh : nhA) {
             if (nh != nullptr) {
                 native_handle_delete(nh);
             }
@@ -1061,7 +1060,7 @@ status_t H2BGraphicBufferProducer::detachNextBuffer(
 
 status_t H2BGraphicBufferProducer::attachBuffer(
         int* outSlot, const sp<GraphicBuffer>& buffer) {
-    AnwBuffer tBuffer;
+    AnwBuffer tBuffer{};
     wrapAs(&tBuffer, *buffer);
     status_t fnStatus;
     status_t transStatus = toStatusT(mBase->attachBuffer(tBuffer,
@@ -1076,7 +1075,7 @@ status_t H2BGraphicBufferProducer::queueBuffer(
         int slot,
         const QueueBufferInput& input,
         QueueBufferOutput* output) {
-    HGraphicBufferProducer::QueueBufferInput tInput;
+    HGraphicBufferProducer::QueueBufferInput tInput{};
     native_handle_t* nh;
     if (!wrapAs(&tInput, &nh, input)) {
         ALOGE("H2BGraphicBufferProducer::queueBuffer - "
@@ -1173,9 +1172,12 @@ status_t H2BGraphicBufferProducer::setGenerationNumber(uint32_t generationNumber
 
 String8 H2BGraphicBufferProducer::getConsumerName() const {
     String8 lName;
-    mBase->getConsumerName([&lName] (hidl_string const& name) {
-                lName = name.c_str();
-            });
+    status_t transStatus = toStatusT(
+            mBase->getConsumerName([&lName](hidl_string const& name) { lName = name.c_str(); }));
+    if (transStatus != NO_ERROR) {
+        ALOGE("getConsumerName failed to transact: %d", transStatus);
+        return String8("TransactFailed");
+    }
     return lName;
 }
 

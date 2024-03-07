@@ -16,7 +16,7 @@
 
 #include <binder/TextOutput.h>
 
-#include <binder/Debug.h>
+#include "Debug.h"
 
 #include <utils/String8.h>
 #include <utils/String16.h>
@@ -39,11 +39,10 @@ TextOutput::~TextOutput() {
 
 static void textOutputPrinter(void* cookie, const char* txt)
 {
-    ((TextOutput*)cookie)->print(txt, strlen(txt));
+    ((std::ostream*)cookie)->write(txt, strlen(txt));
 }
 
-TextOutput& operator<<(TextOutput& to, const TypeCode& val)
-{
+std::ostream& operator<<(std::ostream& to, const TypeCode& val) {
     printTypeCode(val.typeCode(), textOutputPrinter, (void*)&to);
     return to;
 }
@@ -61,12 +60,11 @@ HexDump::HexDump(const void *buf, size_t size, size_t bytesPerLine)
     else mAlignment = 1;
 }
 
-TextOutput& operator<<(TextOutput& to, const HexDump& val)
-{
+std::ostream& operator<<(std::ostream& to, const HexDump& val) {
     printHexData(0, val.buffer(), val.size(), val.bytesPerLine(),
         val.singleLineCutoff(), val.alignment(), val.carrayStyle(),
         textOutputPrinter, (void*)&to);
     return to;
 }
 
-}; // namespace android
+} // namespace android

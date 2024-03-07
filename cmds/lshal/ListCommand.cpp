@@ -28,8 +28,8 @@
 #include <sstream>
 
 #include <android-base/file.h>
+#include <android-base/hex.h>
 #include <android-base/logging.h>
-#include <android-base/parseint.h>
 #include <android/hidl/manager/1.0/IServiceManager.h>
 #include <hidl-hash/Hash.h>
 #include <hidl-util/FQName.h>
@@ -82,7 +82,7 @@ std::string ListCommand::GetName() {
     return "list";
 }
 std::string ListCommand::getSimpleDescription() const {
-    return "List HALs.";
+    return "List HIDL HALs.";
 }
 
 std::string ListCommand::parseCmdline(pid_t pid) const {
@@ -163,11 +163,11 @@ template <typename ObjectType>
 VintfInfo getVintfInfo(const std::shared_ptr<const ObjectType>& object,
                        const FqInstance& fqInstance, vintf::TransportArch ta, VintfInfo value) {
     bool found = false;
-    (void)object->forEachInstanceOfVersion(fqInstance.getPackage(), fqInstance.getVersion(),
-                                           [&](const auto& instance) {
-                                               found = match(instance, fqInstance, ta);
-                                               return !found; // continue if not found
-                                           });
+    (void)object->forEachHidlInstanceOfVersion(fqInstance.getPackage(), fqInstance.getVersion(),
+                                               [&](const auto& instance) {
+                                                   found = match(instance, fqInstance, ta);
+                                                   return !found; // continue if not found
+                                               });
     return found ? value : VINTF_INFO_EMPTY;
 }
 
@@ -203,94 +203,14 @@ VintfInfo ListCommand::getVintfInfo(const std::string& fqInstanceName,
             lshal::getVintfInfo(getFrameworkMatrix(), fqInstance, ta, FRAMEWORK_MATRIX);
 }
 
-static bool scanBinderContext(pid_t pid,
-        const std::string &contextName,
-        std::function<void(const std::string&)> eachLine) {
-    std::ifstream ifs("/d/binder/proc/" + std::to_string(pid));
-    if (!ifs.is_open()) {
-        return false;
-    }
-
-    static const std::regex kContextLine("^context (\\w+)$");
-
-    bool isDesiredContext = false;
-    std::string line;
-    std::smatch match;
-    while(getline(ifs, line)) {
-        if (std::regex_search(line, match, kContextLine)) {
-            isDesiredContext = match.str(1) == contextName;
-            continue;
-        }
-
-        if (!isDesiredContext) {
-            continue;
-        }
-
-        eachLine(line);
-    }
-    return true;
-}
-
 bool ListCommand::getPidInfo(
-        pid_t serverPid, PidInfo *pidInfo) const {
-    static const std::regex kReferencePrefix("^\\s*node \\d+:\\s+u([0-9a-f]+)\\s+c([0-9a-f]+)\\s+");
-    static const std::regex kThreadPrefix("^\\s*thread \\d+:\\s+l\\s+(\\d)(\\d)");
-
-    std::smatch match;
-    return scanBinderContext(serverPid, "hwbinder", [&](const std::string& line) {
-        if (std::regex_search(line, match, kReferencePrefix)) {
-            const std::string &ptrString = "0x" + match.str(2); // use number after c
-            uint64_t ptr;
-            if (!::android::base::ParseUint(ptrString.c_str(), &ptr)) {
-                // Should not reach here, but just be tolerant.
-                err() << "Could not parse number " << ptrString << std::endl;
-                return;
-            }
-            const std::string proc = " proc ";
-            auto pos = line.rfind(proc);
-            if (pos != std::string::npos) {
-                for (const std::string &pidStr : split(line.substr(pos + proc.size()), ' ')) {
-                    int32_t pid;
-                    if (!::android::base::ParseInt(pidStr, &pid)) {
-                        err() << "Could not parse number " << pidStr << std::endl;
-                        return;
-                    }
-                    pidInfo->refPids[ptr].push_back(pid);
-                }
-            }
-
-            return;
-        }
-
-        if (std::regex_search(line, match, kThreadPrefix)) {
-            // "1" is waiting in binder driver
-            // "2" is poll. It's impossible to tell if these are in use.
-            //     and HIDL default code doesn't use it.
-            bool isInUse = match.str(1) != "1";
-            // "0" is a thread that has called into binder
-            // "1" is looper thread
-            // "2" is main looper thread
-            bool isHwbinderThread = match.str(2) != "0";
-
-            if (!isHwbinderThread) {
-                return;
-            }
-
-            if (isInUse) {
-                pidInfo->threadUsage++;
-            }
-
-            pidInfo->threadCount++;
-            return;
-        }
-
-        // not reference or thread line
-        return;
-    });
+        pid_t serverPid, BinderPidInfo *pidInfo) const {
+    const auto& status = getBinderPidInfo(BinderDebugContext::HWBINDER, serverPid, pidInfo);
+    return status == OK;
 }
 
-const PidInfo* ListCommand::getPidInfoCached(pid_t serverPid) {
-    auto pair = mCachedPidInfos.insert({serverPid, PidInfo{}});
+const BinderPidInfo* ListCommand::getPidInfoCached(pid_t serverPid) {
+    auto pair = mCachedPidInfos.insert({serverPid, BinderPidInfo{}});
     if (pair.second /* did insertion take place? */) {
         if (!getPidInfo(serverPid, &pair.first->second)) {
             return nullptr;
@@ -376,23 +296,23 @@ void ListCommand::postprocess() {
     }
 
     mServicesTable.setDescription(
-            "All binderized services (registered services through hwservicemanager)");
+            "| All HIDL binderized services (registered with hwservicemanager)");
     mPassthroughRefTable.setDescription(
-            "All interfaces that getService() has ever return as a passthrough interface;\n"
-            "PIDs / processes shown below might be inaccurate because the process\n"
-            "might have relinquished the interface or might have died.\n"
-            "The Server / Server CMD column can be ignored.\n"
-            "The Clients / Clients CMD column shows all process that have ever dlopen'ed \n"
-            "the library and successfully fetched the passthrough implementation.");
+            "| All HIDL interfaces getService() has ever returned as a passthrough interface;\n"
+            "| PIDs / processes shown below might be inaccurate because the process\n"
+            "| might have relinquished the interface or might have died.\n"
+            "| The Server / Server CMD column can be ignored.\n"
+            "| The Clients / Clients CMD column shows all process that have ever dlopen'ed \n"
+            "| the library and successfully fetched the passthrough implementation.");
     mImplementationsTable.setDescription(
-            "All available passthrough implementations (all -impl.so files).\n"
-            "These may return subclasses through their respective HIDL_FETCH_I* functions.");
+            "| All available HIDL passthrough implementations (all -impl.so files).\n"
+            "| These may return subclasses through their respective HIDL_FETCH_I* functions.");
     mManifestHalsTable.setDescription(
-            "All HALs that are in VINTF manifest.");
+            "| All HIDL HALs that are in VINTF manifest.");
     mLazyHalsTable.setDescription(
-            "All HALs that are declared in VINTF manifest:\n"
-            "   - as hwbinder HALs but are not registered to hwservicemanager, and\n"
-            "   - as hwbinder/passthrough HALs with no implementation.");
+            "| All HIDL HALs that are declared in VINTF manifest:\n"
+            "|    - as hwbinder HALs but are not registered to hwservicemanager, and\n"
+            "|    - as hwbinder/passthrough HALs with no implementation.");
 }
 
 bool ListCommand::addEntryWithInstance(const TableEntry& entry,
@@ -403,7 +323,7 @@ bool ListCommand::addEntryWithInstance(const TableEntry& entry,
         return false;
     }
 
-    if (fqInstance.getPackage() == gIBaseFqName.package()) {
+    if (fqInstance.getPackage() == "android.hidl.base") {
         return true; // always remove IBase from manifest
     }
 
@@ -433,8 +353,16 @@ bool ListCommand::addEntryWithInstance(const TableEntry& entry,
         return false;
     }
 
+    auto vintfFqInstance = vintf::FqInstance::from(fqInstance.string());
+    if (!vintfFqInstance.has_value()) {
+        err() << "Unable to convert " << fqInstance.string() << " to vintf::FqInstance"
+              << std::endl;
+        return false;
+    }
+
     std::string e;
-    if (!manifest->insertInstance(fqInstance, entry.transport, arch, vintf::HalFormat::HIDL, &e)) {
+    if (!manifest->insertInstance(*vintfFqInstance, entry.transport, arch, vintf::HalFormat::HIDL,
+                                  &e)) {
         err() << "Warning: Cannot insert '" << fqInstance.string() << ": " << e << std::endl;
         return false;
     }
@@ -453,7 +381,7 @@ bool ListCommand::addEntryWithoutInstance(const TableEntry& entry,
     }
 
     bool found = false;
-    (void)manifest->forEachInstanceOfVersion(package, version, [&found](const auto&) {
+    (void)manifest->forEachHidlInstanceOfVersion(package, version, [&found](const auto&) {
         found = true;
         return false; // break
     });
@@ -498,7 +426,7 @@ void ListCommand::dumpVintf(const NullableOStream<std::ostream>& out) const {
         }
     }
     out << "-->" << std::endl;
-    out << vintf::gHalManifestConverter(manifest, vintf::SerializeFlags::HALS_ONLY);
+    out << vintf::toXml(manifest, vintf::SerializeFlags::HALS_ONLY);
 }
 
 std::string ListCommand::INIT_VINTF_NOTES{
@@ -552,7 +480,7 @@ void ListCommand::dumpTable(const NullableOStream<std::ostream>& out) const {
                 std::stringstream ss;
                 auto pair = splitFirst(iName, '/');
                 mLshal.emitDebugInfo(pair.first, pair.second, {},
-                                     false /* excludesParentInstances */, ss,
+                                     ParentDebugInfoLevel::FQNAME_ONLY, ss,
                                      NullableOStream<std::ostream>(nullptr));
                 return ss.str();
             };
@@ -724,7 +652,7 @@ Status ListCommand::fetchBinderizedEntry(const sp<IServiceManager> &manager,
         entry->arch = fromBaseArchitecture(debugInfo.arch);
 
         if (debugInfo.pid != NO_PID) {
-            const PidInfo* pidInfo = getPidInfoCached(debugInfo.pid);
+            const BinderPidInfo* pidInfo = getPidInfoCached(debugInfo.pid);
             if (pidInfo == nullptr) {
                 handleError(IO_ERROR,
                             "no information for PID " + std::to_string(debugInfo.pid) +
@@ -772,8 +700,7 @@ Status ListCommand::fetchBinderizedEntry(const sp<IServiceManager> &manager,
             }
 
             auto&& hashArray = hashChain[hashIndex];
-            std::vector<uint8_t> hashVec{hashArray.data(), hashArray.data() + hashArray.size()};
-            entry->hash = Hash::hexString(hashVec);
+            entry->hash = android::base::HexString(hashArray.data(), hashArray.size());
         });
         if (!hashRet.isOk()) {
             handleError(TRANSACTION_ERROR, "getHashChain failed: " + hashRet.description());
@@ -797,9 +724,9 @@ Status ListCommand::fetchManifestHals() {
 
         std::map<std::string, TableEntry> entries;
 
-        manifest->forEachInstance([&] (const vintf::ManifestInstance& manifestInstance) {
+        manifest->forEachHidlInstance([&] (const vintf::ManifestInstance& manifestInstance) {
             TableEntry entry{
-                .interfaceName = manifestInstance.getFqInstance().string(),
+                .interfaceName = manifestInstance.description(),
                 .transport = manifestInstance.transport(),
                 .arch = manifestInstance.arch(),
                 // TODO(b/71555570): Device manifest does not distinguish HALs from vendor or ODM.
@@ -913,6 +840,18 @@ void ListCommand::initFetchTypes() {
     }
 }
 
+// Get all values of enum type T, assuming the first value is 0 and the last value is T::LAST.
+// T::LAST is not included in the returned list.
+template <typename T>
+std::vector<T> GetAllValues() {
+    using BaseType = std::underlying_type_t<T>;
+    std::vector<T> ret;
+    for (BaseType i = 0; i < static_cast<BaseType>(T::LAST); ++i) {
+        ret.push_back(static_cast<T>(i));
+    }
+    return ret;
+}
+
 void ListCommand::registerAllOptions() {
     int v = mOptions.size();
     // A list of acceptable command line options
@@ -972,10 +911,11 @@ void ListCommand::registerAllOptions() {
         thiz->mSelectedColumns.push_back(TableColumnType::VINTF);
         return OK;
     }, "print VINTF info. This column contains a comma-separated list of:\n"
-       "    - DM: device manifest\n"
-       "    - DC: device compatibility matrix\n"
-       "    - FM: framework manifest\n"
-       "    - FC: framework compatibility matrix"});
+       "    - DM: if the HIDL HAL is in the device manifest\n"
+       "    - DC: if the HIDL HAL is in the device compatibility matrix\n"
+       "    - FM: if the HIDL HAL is in the framework manifest\n"
+       "    - FC: if the HIDL HAL is in the framework compatibility matrix\n"
+       "    - X: if the HIDL HAL is in none of the above lists"});
     mOptions.push_back({'S', "service-status", no_argument, v++, [](ListCommand* thiz, const char*) {
         thiz->mSelectedColumns.push_back(TableColumnType::SERVICE_STATUS);
         return OK;
@@ -984,6 +924,15 @@ void ListCommand::registerAllOptions() {
        "    - registered;dead: registered to hwservicemanager but is not responsive;\n"
        "    - declared: only declared in VINTF manifest but is not registered to hwservicemanager;\n"
        "    - N/A: no information for passthrough HALs."});
+
+    mOptions.push_back({'A', "all", no_argument, v++,
+                        [](ListCommand* thiz, const char*) {
+                            auto allColumns = GetAllValues<TableColumnType>();
+                            thiz->mSelectedColumns.insert(thiz->mSelectedColumns.end(),
+                                                          allColumns.begin(), allColumns.end());
+                            return OK;
+                        },
+                        "print all columns"});
 
     // long options without short alternatives
     mOptions.push_back({'\0', "init-vintf", no_argument, v++, [](ListCommand* thiz, const char* arg) {
@@ -1015,46 +964,55 @@ void ListCommand::registerAllOptions() {
         thiz->mNeat = true;
         return OK;
     }, "output is machine parsable (no explanatory text).\nCannot be used with --debug."});
-    mOptions.push_back({'\0', "types", required_argument, v++, [](ListCommand* thiz, const char* arg) {
-        if (!arg) { return USAGE; }
+    mOptions.push_back(
+            {'\0', "types", required_argument, v++,
+             [](ListCommand* thiz, const char* arg) {
+                 if (!arg) {
+                     return USAGE;
+                 }
 
-        static const std::map<std::string, HalType> kHalTypeMap {
-            {"binderized", HalType::BINDERIZED_SERVICES},
-            {"b", HalType::BINDERIZED_SERVICES},
-            {"passthrough_clients", HalType::PASSTHROUGH_CLIENTS},
-            {"c", HalType::PASSTHROUGH_CLIENTS},
-            {"passthrough_libs", HalType::PASSTHROUGH_LIBRARIES},
-            {"l", HalType::PASSTHROUGH_LIBRARIES},
-            {"vintf", HalType::VINTF_MANIFEST},
-            {"v", HalType::VINTF_MANIFEST},
-            {"lazy", HalType::LAZY_HALS},
-            {"z", HalType::LAZY_HALS},
-        };
+                 static const std::map<std::string, std::vector<HalType>> kHalTypeMap{
+                         {"binderized", {HalType::BINDERIZED_SERVICES}},
+                         {"b", {HalType::BINDERIZED_SERVICES}},
+                         {"passthrough_clients", {HalType::PASSTHROUGH_CLIENTS}},
+                         {"c", {HalType::PASSTHROUGH_CLIENTS}},
+                         {"passthrough_libs", {HalType::PASSTHROUGH_LIBRARIES}},
+                         {"l", {HalType::PASSTHROUGH_LIBRARIES}},
+                         {"vintf", {HalType::VINTF_MANIFEST}},
+                         {"v", {HalType::VINTF_MANIFEST}},
+                         {"lazy", {HalType::LAZY_HALS}},
+                         {"z", {HalType::LAZY_HALS}},
+                         {"all", GetAllValues<HalType>()},
+                         {"a", GetAllValues<HalType>()},
+                 };
 
-        std::vector<std::string> halTypesArgs = split(std::string(arg), ',');
-        for (const auto& halTypeArg : halTypesArgs) {
-            if (halTypeArg.empty()) continue;
+                 std::vector<std::string> halTypesArgs = split(std::string(arg), ',');
+                 for (const auto& halTypeArg : halTypesArgs) {
+                     if (halTypeArg.empty()) continue;
 
-            const auto& halTypeIter = kHalTypeMap.find(halTypeArg);
-            if (halTypeIter == kHalTypeMap.end()) {
+                     const auto& halTypeIter = kHalTypeMap.find(halTypeArg);
+                     if (halTypeIter == kHalTypeMap.end()) {
+                         thiz->err() << "Unrecognized HAL type: " << halTypeArg << std::endl;
+                         return USAGE;
+                     }
 
-                thiz->err() << "Unrecognized HAL type: " << halTypeArg << std::endl;
-                return USAGE;
-            }
+                     // Append unique (non-repeated) HAL types to the reporting list
+                     for (auto halType : halTypeIter->second) {
+                         if (std::find(thiz->mListTypes.begin(), thiz->mListTypes.end(), halType) ==
+                             thiz->mListTypes.end()) {
+                             thiz->mListTypes.push_back(halType);
+                         }
+                     }
+                 }
 
-            // Append unique (non-repeated) HAL types to the reporting list
-            HalType halType = halTypeIter->second;
-            if (std::find(thiz->mListTypes.begin(), thiz->mListTypes.end(), halType) ==
-                thiz->mListTypes.end()) {
-                thiz->mListTypes.push_back(halType);
-            }
-        }
-
-        if (thiz->mListTypes.empty()) { return USAGE; }
-        return OK;
-    }, "comma-separated list of one or more sections.\nThe output is restricted to the selected "
-       "section(s). Valid options\nare: (b|binderized), (c|passthrough_clients), (l|"
-       "passthrough_libs), and (v|vintf).\nDefault is `bcl`."});
+                 if (thiz->mListTypes.empty()) {
+                     return USAGE;
+                 }
+                 return OK;
+             },
+             "comma-separated list of one or more sections.\nThe output is restricted to the "
+             "selected section(s). Valid options\nare: (b|binderized), (c|passthrough_clients), (l|"
+             "passthrough_libs), (v|vintf), (z|lazy), and (a|all).\nDefault is `b,c,l`."});
 }
 
 // Create 'longopts' argument to getopt_long. Caller is responsible for maintaining
@@ -1150,7 +1108,7 @@ Status ListCommand::parseArgs(const Arg &arg) {
     }
 
     if (mSelectedColumns.empty()) {
-        mSelectedColumns = {TableColumnType::RELEASED,
+        mSelectedColumns = {TableColumnType::VINTF, TableColumnType::RELEASED,
                             TableColumnType::INTERFACE_NAME, TableColumnType::THREADS,
                             TableColumnType::SERVER_PID, TableColumnType::CLIENT_PIDS};
     }
@@ -1210,7 +1168,7 @@ void ListCommand::usage() const {
     err() << "list:" << std::endl
           << "    lshal" << std::endl
           << "    lshal list" << std::endl
-          << "        List all hals with default ordering and columns (`lshal list -liepc`)" << std::endl
+          << "        List all hals with default ordering and columns (`lshal list -Vliepc`)" << std::endl
           << "    lshal list [-h|--help]" << std::endl
           << "        -h, --help: Print help message for list (`lshal help list`)" << std::endl
           << "    lshal [list] [OPTIONS...]" << std::endl;

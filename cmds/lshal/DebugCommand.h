@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-#ifndef FRAMEWORK_NATIVE_CMDS_LSHAL_DEBUG_COMMAND_H_
-#define FRAMEWORK_NATIVE_CMDS_LSHAL_DEBUG_COMMAND_H_
+#pragma once
 
 #include <string>
 
 #include <android-base/macros.h>
 
 #include "Command.h"
+#include "ParentDebugInfoLevel.h"
 #include "utils.h"
 
 namespace android {
@@ -31,7 +31,7 @@ class Lshal;
 
 class DebugCommand : public Command {
 public:
-    DebugCommand(Lshal &lshal) : Command(lshal) {}
+    explicit DebugCommand(Lshal &lshal) : Command(lshal) {}
     ~DebugCommand() = default;
     Status main(const Arg &arg) override;
     void usage() const override;
@@ -43,9 +43,8 @@ private:
     std::string mInterfaceName;
     std::vector<std::string> mOptions;
 
-    // Outputs the actual descriptor of a hal instead of the debug output
-    // if the arguments provided are a superclass of the actual hal impl.
-    bool mExcludesParentInstances;
+    // See comment on ParentDebugInfoLevel.
+    ParentDebugInfoLevel mParentDebugInfoLevel = ParentDebugInfoLevel::FULL;
 
     DISALLOW_COPY_AND_ASSIGN(DebugCommand);
 };
@@ -53,5 +52,3 @@ private:
 
 }  // namespace lshal
 }  // namespace android
-
-#endif  // FRAMEWORK_NATIVE_CMDS_LSHAL_DEBUG_COMMAND_H_

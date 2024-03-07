@@ -12,16 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+package {
+    // See: http://go/android-license-faq
+    // A large-scale-change added 'default_applicable_licenses' to import
+    // all of the 'license_kinds' from "frameworks_native_license"
+    // to get the below license kinds:
+    //   SPDX-license-identifier-Apache-2.0
+    default_applicable_licenses: ["frameworks_native_license"],
+}
+
 cc_library_shared {
     name: "libinputflingerhost",
-
+    cpp_std: "c++20",
     srcs: [
         "InputFlinger.cpp",
         "InputDriver.cpp",
         "InputHost.cpp",
     ],
 
+    header_libs: ["jni_headers"],
     shared_libs: [
+        "libbase",
         "libbinder",
         "libcrypto",
         "libcutils",
@@ -29,6 +40,9 @@ cc_library_shared {
         "liblog",
         "libutils",
         "libhardware",
+    ],
+    static_libs: [
+        "libarect",
     ],
 
     cflags: [
@@ -39,6 +53,7 @@ cc_library_shared {
         //-fvisibility=hidden
     ],
 
+    export_header_lib_headers: ["jni_headers"],
     export_include_dirs: ["."],
 }
 
@@ -49,13 +64,20 @@ cc_binary {
 
     srcs: ["main.cpp"],
 
-    cflags: ["-Wall", "-Werror"],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
 
     shared_libs: [
+        "libbase",
         "libbinder",
         "libinputflingerhost",
         "libutils",
+        "libinput",
     ],
-
-    init_rc: ["inputflinger.rc"],
+    static_libs: [
+        "libarect",
+        "libui-types",
+    ],
 }

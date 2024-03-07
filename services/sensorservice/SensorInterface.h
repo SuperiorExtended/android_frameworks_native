@@ -26,6 +26,7 @@ namespace android {
 // ---------------------------------------------------------------------------
 class SensorDevice;
 class SensorFusion;
+class SensorService;
 
 class SensorInterface : public VirtualLightRefBase {
 public:
@@ -65,6 +66,7 @@ public:
 
     virtual const Sensor& getSensor() const override { return mSensor; }
     virtual void autoDisable(void* /*ident*/, int /*handle*/) override { }
+
 protected:
     SensorDevice& mSensorDevice;
     Sensor mSensor;
@@ -100,6 +102,43 @@ protected:
     SensorFusion& mSensorFusion;
 };
 
+// ---------------------------------------------------------------------------
+
+class RuntimeSensor : public BaseSensor {
+public:
+    static constexpr int DEFAULT_DEVICE_ID = 0;
+
+    class SensorCallback : public virtual RefBase {
+      public:
+        virtual status_t onConfigurationChanged(int handle, bool enabled, int64_t samplingPeriodNs,
+                                                int64_t batchReportLatencyNs) = 0;
+    };
+    RuntimeSensor(const sensor_t& sensor, sp<SensorCallback> callback);
+    virtual status_t activate(void* ident, bool enabled) override;
+    virtual status_t batch(void* ident, int handle, int flags, int64_t samplingPeriodNs,
+                           int64_t maxBatchReportLatencyNs) override;
+    virtual status_t setDelay(void* ident, int handle, int64_t ns) override;
+    virtual bool process(sensors_event_t*, const sensors_event_t&) { return false; }
+    virtual bool isVirtual() const override { return false; }
+
+private:
+    bool mEnabled = false;
+    int64_t mSamplingPeriodNs = 0;
+    int64_t mBatchReportLatencyNs = 0;
+    sp<SensorCallback> mCallback;
+};
+
+// ---------------------------------------------------------------------------
+
+class ProximitySensor : public HardwareSensor {
+public:
+    explicit ProximitySensor(const sensor_t& sensor, SensorService& service);
+
+    status_t activate(void* ident, bool enabled) override;
+
+private:
+    SensorService& mSensorService;
+};
 
 // ---------------------------------------------------------------------------
 }; // namespace android

@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef FRAMEWORK_NATIVE_CMDS_LSHAL_HELP_COMMAND_H_
-#define FRAMEWORK_NATIVE_CMDS_LSHAL_HELP_COMMAND_H_
+#pragma once
 
 #include <string>
 
@@ -31,7 +30,7 @@ class Lshal;
 
 class HelpCommand : public Command {
 public:
-    HelpCommand(Lshal &lshal) : Command(lshal) {}
+    explicit HelpCommand(Lshal &lshal) : Command(lshal) {}
     ~HelpCommand() = default;
     Status main(const Arg &arg) override;
     void usage() const override;
@@ -44,5 +43,3 @@ public:
 
 }  // namespace lshal
 }  // namespace android
-
-#endif  // FRAMEWORK_NATIVE_CMDS_LSHAL_HELP_COMMAND_H_

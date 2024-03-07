@@ -14,40 +14,55 @@
  * limitations under the License.
  */
 
-#ifndef _UI_INPUT_MANAGER_H
-#define _UI_INPUT_MANAGER_H
+#pragma once
 
 /**
  * Native input manager.
  */
 
-#include "EventHub.h"
-#include "InputReader.h"
-#include "InputDispatcher.h"
+#include "InputDeviceMetricsCollector.h"
+#include "InputProcessor.h"
+#include "InputReaderBase.h"
+#include "include/UnwantedInteractionBlockerInterface.h"
 
+#include <InputDispatcherInterface.h>
+#include <InputDispatcherPolicyInterface.h>
 #include <input/Input.h>
 #include <input/InputTransport.h>
+
+#include <android/os/BnInputFlinger.h>
 #include <utils/Errors.h>
-#include <utils/Vector.h>
-#include <utils/Timers.h>
 #include <utils/RefBase.h>
+#include <utils/Timers.h>
+
+using android::os::BnInputFlinger;
 
 namespace android {
+class InputChannel;
+class InputDispatcherThread;
 
 /*
  * The input manager is the core of the system event processing.
  *
- * The input manager uses two threads.
+ * The input manager has three components.
  *
- * 1. The InputReaderThread (called "InputReader") reads and preprocesses raw input events,
- *    applies policy, and posts messages to a queue managed by the DispatcherThread.
- * 2. The InputDispatcherThread (called "InputDispatcher") thread waits for new events on the
- *    queue and asynchronously dispatches them to applications.
+ * 1. The InputReader class starts a thread that reads and preprocesses raw input events, applies
+ *    policy, and posts messages to a queue managed by the UnwantedInteractionBlocker.
+ * 2. The UnwantedInteractionBlocker is responsible for removing unwanted interactions. For example,
+ *    this could be a palm on the screen. This stage would alter the event stream to remove either
+ *    partially (some of the pointers) or fully (all touches) the unwanted interaction. The events
+ *    are processed on the InputReader thread, without any additional queue. The events are then
+ *    posted to the queue managed by the InputProcessor.
+ * 3. The InputProcessor class starts a thread to communicate with the device-specific
+ *    IInputProcessor HAL. It then waits on the queue of events from UnwantedInteractionBlocker,
+ *    processes the events (for example, applies a classification to the events), and queues them
+ *    for the InputDispatcher.
+ * 4. The InputDispatcher class starts a thread that waits for new events on the
+ *    previous queue and asynchronously dispatches them to applications.
  *
- * By design, the InputReaderThread class and InputDispatcherThread class do not share any
- * internal state.  Moreover, all communication is done one way from the InputReaderThread
- * into the InputDispatcherThread and never the reverse.  Both classes may interact with the
- * InputDispatchPolicy, however.
+ * By design, none of these classes share any internal state.  Moreover, all communication is
+ * done one way from the InputReader to the InputDispatcher and never the reverse.  All
+ * classes may interact with the InputDispatchPolicy, however.
  *
  * The InputManager class never makes any calls into Java itself.  Instead, the
  * InputDispatchPolicy is responsible for performing all external interactions with the
@@ -59,50 +74,64 @@ protected:
     virtual ~InputManagerInterface() { }
 
 public:
-    /* Starts the input manager threads. */
+    /* Starts the input threads. */
     virtual status_t start() = 0;
 
-    /* Stops the input manager threads and waits for them to exit. */
+    /* Stops the input threads and waits for them to exit. */
     virtual status_t stop() = 0;
 
     /* Gets the input reader. */
-    virtual sp<InputReaderInterface> getReader() = 0;
+    virtual InputReaderInterface& getReader() = 0;
+
+    /* Gets the input processor. */
+    virtual InputProcessorInterface& getProcessor() = 0;
+
+    /* Gets the metrics collector. */
+    virtual InputDeviceMetricsCollectorInterface& getMetricsCollector() = 0;
 
     /* Gets the input dispatcher. */
-    virtual sp<InputDispatcherInterface> getDispatcher() = 0;
+    virtual InputDispatcherInterface& getDispatcher() = 0;
+
+    /* Check that the input stages have not deadlocked. */
+    virtual void monitor() = 0;
+
+    /* Dump the state of the components controlled by the input manager. */
+    virtual void dump(std::string& dump) = 0;
 };
 
-class InputManager : public InputManagerInterface {
+class InputManager : public InputManagerInterface, public BnInputFlinger {
 protected:
-    virtual ~InputManager();
+    ~InputManager() override;
 
 public:
-    InputManager(
-            const sp<EventHubInterface>& eventHub,
-            const sp<InputReaderPolicyInterface>& readerPolicy,
-            const sp<InputDispatcherPolicyInterface>& dispatcherPolicy);
+    InputManager(const sp<InputReaderPolicyInterface>& readerPolicy,
+                 InputDispatcherPolicyInterface& dispatcherPolicy);
 
-    // (used for testing purposes)
-    InputManager(
-            const sp<InputReaderInterface>& reader,
-            const sp<InputDispatcherInterface>& dispatcher);
+    status_t start() override;
+    status_t stop() override;
 
-    virtual status_t start();
-    virtual status_t stop();
+    InputReaderInterface& getReader() override;
+    InputProcessorInterface& getProcessor() override;
+    InputDeviceMetricsCollectorInterface& getMetricsCollector() override;
+    InputDispatcherInterface& getDispatcher() override;
+    void monitor() override;
+    void dump(std::string& dump) override;
 
-    virtual sp<InputReaderInterface> getReader();
-    virtual sp<InputDispatcherInterface> getDispatcher();
+    status_t dump(int fd, const Vector<String16>& args) override;
+    binder::Status createInputChannel(const std::string& name, InputChannel* outChannel) override;
+    binder::Status removeInputChannel(const sp<IBinder>& connectionToken) override;
+    binder::Status setFocusedWindow(const gui::FocusRequest&) override;
 
 private:
-    sp<InputReaderInterface> mReader;
-    sp<InputReaderThread> mReaderThread;
+    std::unique_ptr<InputReaderInterface> mReader;
 
-    sp<InputDispatcherInterface> mDispatcher;
-    sp<InputDispatcherThread> mDispatcherThread;
+    std::unique_ptr<UnwantedInteractionBlockerInterface> mBlocker;
 
-    void initialize();
+    std::unique_ptr<InputProcessorInterface> mProcessor;
+
+    std::unique_ptr<InputDeviceMetricsCollectorInterface> mCollector;
+
+    std::unique_ptr<InputDispatcherInterface> mDispatcher;
 };
 
 } // namespace android
-
-#endif // _UI_INPUT_MANAGER_H

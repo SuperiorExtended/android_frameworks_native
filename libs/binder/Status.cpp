@@ -63,6 +63,26 @@ Status Status::fromStatusT(status_t status) {
     return ret;
 }
 
+std::string Status::exceptionToString(int32_t exceptionCode) {
+    switch (exceptionCode) {
+        #define EXCEPTION_TO_CASE(EXCEPTION) case EXCEPTION: return #EXCEPTION;
+        EXCEPTION_TO_CASE(EX_NONE)
+        EXCEPTION_TO_CASE(EX_SECURITY)
+        EXCEPTION_TO_CASE(EX_BAD_PARCELABLE)
+        EXCEPTION_TO_CASE(EX_ILLEGAL_ARGUMENT)
+        EXCEPTION_TO_CASE(EX_NULL_POINTER)
+        EXCEPTION_TO_CASE(EX_ILLEGAL_STATE)
+        EXCEPTION_TO_CASE(EX_NETWORK_MAIN_THREAD)
+        EXCEPTION_TO_CASE(EX_UNSUPPORTED_OPERATION)
+        EXCEPTION_TO_CASE(EX_SERVICE_SPECIFIC)
+        EXCEPTION_TO_CASE(EX_PARCELABLE)
+        EXCEPTION_TO_CASE(EX_HAS_REPLY_HEADER)
+        EXCEPTION_TO_CASE(EX_TRANSACTION_FAILED)
+        #undef EXCEPTION_TO_CASE
+        default: return std::to_string(exceptionCode);
+    }
+}
+
 Status::Status(int32_t exceptionCode, int32_t errorCode)
     : mException(exceptionCode),
       mErrorCode(errorCode) {}
@@ -82,13 +102,23 @@ status_t Status::readFromParcel(const Parcel& parcel) {
     // Skip over fat response headers.  Not used (or propagated) in native code.
     if (mException == EX_HAS_REPLY_HEADER) {
         // Note that the header size includes the 4 byte size field.
-        const int32_t header_start = parcel.dataPosition();
+        const size_t header_start = parcel.dataPosition();
+        // Get available size before reading more
+        const size_t header_avail = parcel.dataAvail();
+
         int32_t header_size;
         status = parcel.readInt32(&header_size);
         if (status != OK) {
             setFromStatusT(status);
             return status;
         }
+
+        if (header_size < 0 || static_cast<size_t>(header_size) > header_avail) {
+            android_errorWriteLog(0x534e4554, "132650049");
+            setFromStatusT(UNKNOWN_ERROR);
+            return UNKNOWN_ERROR;
+        }
+
         parcel.setDataPosition(header_start + header_size);
         // And fat response headers are currently only used when there are no
         // exceptions, so act like there was no error.
@@ -100,34 +130,57 @@ status_t Status::readFromParcel(const Parcel& parcel) {
     }
 
     // The remote threw an exception.  Get the message back.
-    String16 message;
+    std::optional<String16> message;
     status = parcel.readString16(&message);
     if (status != OK) {
         setFromStatusT(status);
         return status;
     }
-    mMessage = String8(message);
+    mMessage = String8(message.value_or(String16()));
 
     // Skip over the remote stack trace data
+    const size_t remote_start = parcel.dataPosition();
+    // Get available size before reading more
+    const size_t remote_avail = parcel.dataAvail();
     int32_t remote_stack_trace_header_size;
     status = parcel.readInt32(&remote_stack_trace_header_size);
     if (status != OK) {
         setFromStatusT(status);
         return status;
     }
-    parcel.setDataPosition(parcel.dataPosition() + remote_stack_trace_header_size);
+    if (remote_stack_trace_header_size < 0 ||
+        static_cast<size_t>(remote_stack_trace_header_size) > remote_avail) {
+
+        android_errorWriteLog(0x534e4554, "132650049");
+        setFromStatusT(UNKNOWN_ERROR);
+        return UNKNOWN_ERROR;
+    }
+
+    if (remote_stack_trace_header_size != 0) {
+        parcel.setDataPosition(remote_start + remote_stack_trace_header_size);
+    }
 
     if (mException == EX_SERVICE_SPECIFIC) {
         status = parcel.readInt32(&mErrorCode);
     } else if (mException == EX_PARCELABLE) {
         // Skip over the blob of Parcelable data
-        const int32_t header_start = parcel.dataPosition();
+        const size_t header_start = parcel.dataPosition();
+        // Get available size before reading more
+        const size_t header_avail = parcel.dataAvail();
+
         int32_t header_size;
         status = parcel.readInt32(&header_size);
         if (status != OK) {
             setFromStatusT(status);
             return status;
         }
+
+        if (header_size < 0 || static_cast<size_t>(header_size) > header_avail) {
+            android_errorWriteLog(0x534e4554, "132650049");
+            setFromStatusT(UNKNOWN_ERROR);
+            return UNKNOWN_ERROR;
+        }
+
         parcel.setDataPosition(header_start + header_size);
     }
     if (status != OK) {
@@ -146,13 +199,15 @@ status_t Status::writeToParcel(Parcel* parcel) const {
     }
 
     status_t status = parcel->writeInt32(mException);
-    if (status != OK) { return status; }
+    if (status != OK) return status;
     if (mException == EX_NONE) {
         // We have no more information to write.
         return status;
     }
     status = parcel->writeString16(String16(mMessage));
+    if (status != OK) return status;
     status = parcel->writeInt32(0); // Empty remote stack trace header
+    if (status != OK) return status;
     if (mException == EX_SERVICE_SPECIFIC) {
         status = parcel->writeInt32(mErrorCode);
     } else if (mException == EX_PARCELABLE) {
@@ -160,6 +215,12 @@ status_t Status::writeToParcel(Parcel* parcel) const {
         status = parcel->writeInt32(0);
     }
     return status;
+}
+
+status_t Status::writeOverParcel(Parcel* parcel) const {
+    parcel->setDataSize(0);
+    parcel->setDataPosition(0);
+    return writeToParcel(parcel);
 }
 
 void Status::setException(int32_t ex, const String8& message) {
@@ -184,20 +245,16 @@ String8 Status::toString8() const {
     if (mException == EX_NONE) {
         ret.append("No error");
     } else {
-        ret.appendFormat("Status(%d): '", mException);
-        if (mException == EX_SERVICE_SPECIFIC ||
-            mException == EX_TRANSACTION_FAILED) {
+        ret.appendFormat("Status(%d, %s): '", mException, exceptionToString(mException).c_str());
+        if (mException == EX_SERVICE_SPECIFIC) {
             ret.appendFormat("%d: ", mErrorCode);
+        } else if (mException == EX_TRANSACTION_FAILED) {
+            ret.appendFormat("%s: ", statusToString(mErrorCode).c_str());
         }
         ret.append(String8(mMessage));
         ret.append("'");
     }
     return ret;
-}
-
-std::stringstream& operator<< (std::stringstream& stream, const Status& s) {
-    stream << s.toString8().string();
-    return stream;
 }
 
 }  // namespace binder

@@ -164,6 +164,8 @@ typedef enum OMX_VIDEO_VP9PROFILETYPE {
     // HDR profiles also support passing HDR metadata
     OMX_VIDEO_VP9Profile2HDR = 0x1000,
     OMX_VIDEO_VP9Profile3HDR = 0x2000,
+    OMX_VIDEO_VP9Profile2HDR10Plus = 0x4000,
+    OMX_VIDEO_VP9Profile3HDR10Plus = 0x8000,
     OMX_VIDEO_VP9ProfileUnknown = 0x6EFFFFFF,
     OMX_VIDEO_VP9ProfileMax = 0x7FFFFFFF
 } OMX_VIDEO_VP9PROFILETYPE;
@@ -216,6 +218,7 @@ typedef enum OMX_VIDEO_HEVCPROFILETYPE {
     OMX_VIDEO_HEVCProfileMainStill    = 0x4,
     // Main10 profile with HDR SEI support.
     OMX_VIDEO_HEVCProfileMain10HDR10  = 0x1000,
+    OMX_VIDEO_HEVCProfileMain10HDR10Plus  = 0x2000,
     OMX_VIDEO_HEVCProfileMax          = 0x7FFFFFFF
 } OMX_VIDEO_HEVCPROFILETYPE;
 
@@ -288,18 +291,19 @@ typedef struct OMX_VIDEO_RENDEREVENTTYPE {
 
 /** Dolby Vision Profile enum type */
 typedef enum OMX_VIDEO_DOLBYVISIONPROFILETYPE {
-    OMX_VIDEO_DolbyVisionProfileUnknown = 0x0,
-    OMX_VIDEO_DolbyVisionProfileDvavPer = 0x1,
-    OMX_VIDEO_DolbyVisionProfileDvavPen = 0x2,
-    OMX_VIDEO_DolbyVisionProfileDvheDer = 0x4,
-    OMX_VIDEO_DolbyVisionProfileDvheDen = 0x8,
-    OMX_VIDEO_DolbyVisionProfileDvheDtr = 0x10,
-    OMX_VIDEO_DolbyVisionProfileDvheStn = 0x20,
-    OMX_VIDEO_DolbyVisionProfileDvheDth = 0x40,
-    OMX_VIDEO_DolbyVisionProfileDvheDtb = 0x80,
-    OMX_VIDEO_DolbyVisionProfileDvheSt  = 0x100,
-    OMX_VIDEO_DolbyVisionProfileDvavSe  = 0x200,
-    OMX_VIDEO_DolbyVisionProfileMax     = 0x7FFFFFFF
+    OMX_VIDEO_DolbyVisionProfileUnknown  = 0x0,
+    OMX_VIDEO_DolbyVisionProfileDvavPer  = 0x1,
+    OMX_VIDEO_DolbyVisionProfileDvavPen  = 0x2,
+    OMX_VIDEO_DolbyVisionProfileDvheDer  = 0x4,
+    OMX_VIDEO_DolbyVisionProfileDvheDen  = 0x8,
+    OMX_VIDEO_DolbyVisionProfileDvheDtr  = 0x10,
+    OMX_VIDEO_DolbyVisionProfileDvheStn  = 0x20,
+    OMX_VIDEO_DolbyVisionProfileDvheDth  = 0x40,
+    OMX_VIDEO_DolbyVisionProfileDvheDtb  = 0x80,
+    OMX_VIDEO_DolbyVisionProfileDvheSt   = 0x100,
+    OMX_VIDEO_DolbyVisionProfileDvavSe   = 0x200,
+    OMX_VIDEO_DolbyVisionProfileDvav110  = 0x400,
+    OMX_VIDEO_DolbyVisionProfileMax      = 0x7FFFFFFF
 } OMX_VIDEO_DOLBYVISIONPROFILETYPE;
 
 /** Dolby Vision Level enum type */
@@ -314,8 +318,51 @@ typedef enum OMX_VIDEO_DOLBYVISIONLEVELTYPE {
     OMX_VIDEO_DolbyVisionLevelUhd30   = 0x40,
     OMX_VIDEO_DolbyVisionLevelUhd48   = 0x80,
     OMX_VIDEO_DolbyVisionLevelUhd60   = 0x100,
+    OMX_VIDEO_DolbyVisionLevelUhd120  = 0x200,
+    OMX_VIDEO_DolbyVisionLevel8k30    = 0x400,
+    OMX_VIDEO_DolbyVisionLevel8k60    = 0x800,
     OMX_VIDEO_DolbyVisionLevelmax     = 0x7FFFFFFF
 } OMX_VIDEO_DOLBYVISIONLEVELTYPE;
+
+/** AV1 Profile enum type */
+typedef enum OMX_VIDEO_AV1PROFILETYPE {
+    OMX_VIDEO_AV1ProfileMain8           = 0x00000001,
+    OMX_VIDEO_AV1ProfileMain10          = 0x00000002,
+    OMX_VIDEO_AV1ProfileMain10HDR10     = 0x00001000,
+    OMX_VIDEO_AV1ProfileMain10HDR10Plus = 0x00002000,
+    OMX_VIDEO_AV1ProfileUnknown         = 0x6EFFFFFF,
+    OMX_VIDEO_AV1ProfileMax             = 0x7FFFFFFF
+} OMX_VIDEO_AV1PROFILETYPE;
+
+/** AV1 Level enum type */
+typedef enum OMX_VIDEO_AV1LEVELTYPE {
+    OMX_VIDEO_AV1Level2         = 0x1,
+    OMX_VIDEO_AV1Level21        = 0x2,
+    OMX_VIDEO_AV1Level22        = 0x4,
+    OMX_VIDEO_AV1Level23        = 0x8,
+    OMX_VIDEO_AV1Level3         = 0x10,
+    OMX_VIDEO_AV1Level31        = 0x20,
+    OMX_VIDEO_AV1Level32        = 0x40,
+    OMX_VIDEO_AV1Level33        = 0x80,
+    OMX_VIDEO_AV1Level4         = 0x100,
+    OMX_VIDEO_AV1Level41        = 0x200,
+    OMX_VIDEO_AV1Level42        = 0x400,
+    OMX_VIDEO_AV1Level43        = 0x800,
+    OMX_VIDEO_AV1Level5         = 0x1000,
+    OMX_VIDEO_AV1Level51        = 0x2000,
+    OMX_VIDEO_AV1Level52        = 0x4000,
+    OMX_VIDEO_AV1Level53        = 0x8000,
+    OMX_VIDEO_AV1Level6         = 0x10000,
+    OMX_VIDEO_AV1Level61        = 0x20000,
+    OMX_VIDEO_AV1Level62        = 0x40000,
+    OMX_VIDEO_AV1Level63        = 0x80000,
+    OMX_VIDEO_AV1Level7         = 0x100000,
+    OMX_VIDEO_AV1Level71        = 0x200000,
+    OMX_VIDEO_AV1Level72        = 0x400000,
+    OMX_VIDEO_AV1Level73        = 0x800000,
+    OMX_VIDEO_AV1LevelUnknown   = 0x6EFFFFFF,
+    OMX_VIDEO_AV1LevelMax       = 0x7FFFFFFF
+} OMX_VIDEO_AV1LEVELTYPE;
 
 /**
  * Structure for configuring video compression intra refresh period

@@ -65,6 +65,10 @@ bool create_cache_path(char path[PKG_PATH_MAX], const char *src, const char *ins
     return create_cache_path_default(path, src, instruction_set);
 }
 
+bool force_compile_without_image() {
+    return false;
+}
+
 static bool initialize_globals() {
     return init_globals_from_data_and_root();
 }
@@ -74,7 +78,7 @@ static int initialize_directories() {
 
     // Read current filesystem layout version to handle upgrade paths
     char version_path[PATH_MAX];
-    snprintf(version_path, PATH_MAX, "%s.layout_version", android_data_dir.c_str());
+    snprintf(version_path, PATH_MAX, "%smisc/installd/layout_version", android_data_dir.c_str());
 
     int oldVersion;
     if (fs_read_atomic_int(version_path, &oldVersion) == -1) {

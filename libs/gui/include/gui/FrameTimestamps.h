@@ -17,6 +17,9 @@
 #ifndef ANDROID_GUI_FRAMETIMESTAMPS_H
 #define ANDROID_GUI_FRAMETIMESTAMPS_H
 
+#include <android/gui/FrameEvent.h>
+
+#include <gui/CompositorTiming.h>
 #include <ui/FenceTime.h>
 #include <utils/Flattenable.h>
 #include <utils/StrongPointer.h>
@@ -30,24 +33,9 @@ namespace android {
 
 struct FrameEvents;
 class FrameEventHistoryDelta;
-class String8;
 
-
-// Identifiers for all the events that may be recorded or reported.
-enum class FrameEvent {
-    POSTED,
-    REQUESTED_PRESENT,
-    LATCH,
-    ACQUIRE,
-    FIRST_REFRESH_START,
-    LAST_REFRESH_START,
-    GPU_COMPOSITION_DONE,
-    DISPLAY_PRESENT,
-    DEQUEUE_READY,
-    RELEASE,
-    EVENT_COUNT, // Not an actual event.
-};
-
+using gui::CompositorTiming;
+using gui::FrameEvent;
 
 // A collection of timestamps corresponding to a single frame.
 struct FrameEvents {
@@ -72,7 +60,7 @@ struct FrameEvents {
     bool hasDequeueReadyInfo() const;
 
     void checkFencesForCompletion();
-    void dump(String8& outString) const;
+    void dump(std::string& outString) const;
 
     bool valid{false};
     int connectId{0};
@@ -97,27 +85,24 @@ struct FrameEvents {
     std::shared_ptr<FenceTime> releaseFence{FenceTime::NO_FENCE};
 };
 
-struct CompositorTiming {
-    nsecs_t deadline{0};
-    nsecs_t interval{16666667};
-    nsecs_t presentLatency{16666667};
-};
-
 // A short history of frames that are synchronized between the consumer and
 // producer via deltas.
 class FrameEventHistory {
 public:
+    FrameEventHistory();
     virtual ~FrameEventHistory();
 
     FrameEvents* getFrame(uint64_t frameNumber);
     FrameEvents* getFrame(uint64_t frameNumber, size_t* iHint);
     void checkFencesForCompletion();
-    void dump(String8& outString) const;
+    void dump(std::string& outString) const;
 
-    static constexpr size_t MAX_FRAME_HISTORY = 8;
+    static const size_t INITIAL_MAX_FRAME_HISTORY;
 
 protected:
-    std::array<FrameEvents, MAX_FRAME_HISTORY> mFrames;
+    void resize(size_t newSize);
+
+    std::vector<FrameEvents> mFrames;
 
     CompositorTiming mCompositorTiming;
 };
@@ -131,6 +116,7 @@ public:
     // Public for testing.
     static nsecs_t snapToNextTick(
             nsecs_t timestamp, nsecs_t tickPhase, nsecs_t tickInterval);
+    nsecs_t getReportedCompositeDeadline() const { return mCompositorTiming.deadline; };
 
     nsecs_t getNextCompositeDeadline(const nsecs_t now) const;
     nsecs_t getCompositeInterval() const { return mCompositorTiming.interval; }
@@ -154,6 +140,8 @@ protected:
     virtual std::shared_ptr<FenceTime> createFenceTime(
             const sp<Fence>& fence) const;
 
+    void resize(size_t newSize);
+
     size_t mAcquireOffset{0};
 
     // The consumer updates it's timelines in Layer and SurfaceFlinger since
@@ -174,7 +162,6 @@ struct NewFrameEventsEntry {
     nsecs_t requestedPresentTime{0};
     std::shared_ptr<FenceTime> acquireFence{FenceTime::NO_FENCE};
 };
-
 
 // Used by the consumer to keep track of which fields it already sent to
 // the producer.
@@ -205,9 +192,11 @@ private:
 // The consumer's interface to FrameEventHistory
 class ConsumerFrameEventHistory : public FrameEventHistory {
 public:
+    ConsumerFrameEventHistory();
     ~ConsumerFrameEventHistory() override;
 
     void onDisconnect();
+    void setProducerWantsEvents();
 
     void initializeCompositorTiming(const CompositorTiming& compositorTiming);
 
@@ -223,11 +212,13 @@ public:
 
     void getAndResetDelta(FrameEventHistoryDelta* delta);
 
+    void resize(size_t newSize);
+
 private:
     void getFrameDelta(FrameEventHistoryDelta* delta,
-            const std::array<FrameEvents, MAX_FRAME_HISTORY>::iterator& frame);
+                       const std::vector<FrameEvents>::iterator& frame);
 
-    std::array<FrameEventDirtyFields, MAX_FRAME_HISTORY> mFramesDirty;
+    std::vector<FrameEventDirtyFields> mFramesDirty;
 
     size_t mQueueOffset{0};
     size_t mCompositionOffset{0};
@@ -264,6 +255,10 @@ public:
             size_t& count) const;
     status_t unflatten(void const*& buffer, size_t& size, int const*& fds,
             size_t& count);
+
+    uint64_t getFrameNumber() const;
+    bool getLatchTime(nsecs_t* latchTime) const;
+    bool getDisplayPresentFence(sp<Fence>* fence) const;
 
 private:
     static constexpr size_t minFlattenedSize();
@@ -324,6 +319,9 @@ public:
             size_t& count) const;
     status_t unflatten(void const*& buffer, size_t& size, int const*& fds,
             size_t& count);
+
+    std::vector<FrameEventsDelta>::const_iterator begin() const;
+    std::vector<FrameEventsDelta>::const_iterator end() const;
 
 private:
     static constexpr size_t minFlattenedSize();

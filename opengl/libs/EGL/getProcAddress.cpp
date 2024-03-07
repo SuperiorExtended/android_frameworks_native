@@ -16,15 +16,12 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <stdlib.h>
-
 #include <log/log.h>
+#include <stdlib.h>
 
 #include "egldefs.h"
 
-// ----------------------------------------------------------------------------
 namespace android {
-// ----------------------------------------------------------------------------
 
 #undef API_ENTRY
 #undef CALL_GL_EXTENSION_API
@@ -34,6 +31,7 @@ namespace android {
 #undef GL_EXTENSION_LIST
 #undef GET_TLS
 
+// clang-format off
 #if defined(__arm__)
 
     #define GET_TLS(reg) "mrc p15, 0, " #reg ", c13, c0, 3 \n"
@@ -120,70 +118,27 @@ namespace android {
             : "rax", "cc"                                       \
             );
 
-#elif defined(__mips64)
+#elif defined(__riscv)
+    #define API_ENTRY(_api) __attribute__((noinline)) _api
 
-        #define API_ENTRY(_api) __attribute__((noinline)) _api
-
-        #define CALL_GL_EXTENSION_API(_api, ...)                    \
-            register unsigned int _t0 asm("$12");                   \
-            register unsigned int _fn asm("$25");                   \
-            register unsigned int _tls asm("$3");                   \
-            asm volatile(                                           \
-                ".set  push\n\t"                                    \
-                ".set  noreorder\n\t"                               \
-                "rdhwr %[tls], $29\n\t"                             \
-                "ld    %[t0], %[OPENGL_API](%[tls])\n\t"            \
-                "beqz  %[t0], 1f\n\t"                               \
-                " move %[fn], $ra\n\t"                              \
-                "ld    %[t0], %[API](%[t0])\n\t"                    \
-                "beqz  %[t0], 1f\n\t"                               \
-                " nop\n\t"                                          \
-                "move  %[fn], %[t0]\n\t"                            \
-                "1:\n\t"                                            \
-                "jalr  $0, %[fn]\n\t"                               \
-                " nop\n\t"                                          \
-                ".set  pop\n\t"                                     \
-                : [fn] "=c"(_fn),                                   \
-                  [tls] "=&r"(_tls),                                \
-                  [t0] "=&r"(_t0)                                   \
-                : [OPENGL_API] "I"(TLS_SLOT_OPENGL_API*4),          \
-                  [API] "I"(__builtin_offsetof(gl_hooks_t,          \
-                                          ext.extensions[_api]))    \
-                :                                                   \
-            );
-
-#elif defined(__mips__)
-
-        #define API_ENTRY(_api) __attribute__((noinline)) _api
-
-        #define CALL_GL_EXTENSION_API(_api, ...)                    \
-            register unsigned int _t0 asm("$8");                    \
-            register unsigned int _fn asm("$25");                    \
-            register unsigned int _tls asm("$3");                   \
-            asm volatile(                                           \
-                ".set  push\n\t"                                    \
-                ".set  noreorder\n\t"                               \
-                ".set  mips32r2\n\t"                                \
-                "rdhwr %[tls], $29\n\t"                             \
-                "lw    %[t0], %[OPENGL_API](%[tls])\n\t"            \
-                "beqz  %[t0], 1f\n\t"                               \
-                " move %[fn], $ra\n\t"                              \
-                "lw    %[t0], %[API](%[t0])\n\t"                    \
-                "beqz  %[t0], 1f\n\t"                               \
-                " nop\n\t"                                          \
-                "move  %[fn], %[t0]\n\t"                            \
-                "1:\n\t"                                            \
-                "jalr  $0, %[fn]\n\t"                               \
-                " nop\n\t"                                          \
-                ".set  pop\n\t"                                     \
-                : [fn] "=c"(_fn),                                   \
-                  [tls] "=&r"(_tls),                                \
-                  [t0] "=&r"(_t0)                                   \
-                : [OPENGL_API] "I"(TLS_SLOT_OPENGL_API*4),          \
-                  [API] "I"(__builtin_offsetof(gl_hooks_t,          \
-                                          ext.extensions[_api]))    \
-                :                                                   \
-            );
+    #define CALL_GL_EXTENSION_API(_api)                             \
+        asm volatile(                                               \
+            "mv t0, tp\n"                                           \
+            "li t1, %[tls]\n"                                       \
+            "add t0, t0, t1\n"                                      \
+            "ld t0, 0(t0)\n"                                        \
+            "beqz t0, 1f\n"                                         \
+            "li t1, %[api]\n"                                       \
+            "add t0, t0, t1\n"                                      \
+            "ld t0, 0(t0)\n"                                        \
+            "jalr x0, t0\n"                                         \
+            "1: ret\n"                                              \
+            :                                                       \
+            : [tls] "i" (TLS_SLOT_OPENGL_API * sizeof(void*)),      \
+              [api] "i" (__builtin_offsetof(gl_hooks_t,             \
+                                        ext.extensions[_api]))      \
+            : "t0", "t1"                                            \
+        );
 
 #endif
 
@@ -239,13 +194,13 @@ namespace android {
     name(248) name(249) name(250) name(251) name(252) name(253) name(254) name(255)
 
 
-GL_EXTENSION_LIST( GL_EXTENSION )
+GL_EXTENSION_LIST(GL_EXTENSION)
 
-#define GL_EXTENSION_ARRAY(_n)  GL_EXTENSION_NAME(_n),
+#define GL_EXTENSION_ARRAY(_n) GL_EXTENSION_NAME(_n),
+// clang-format on
 
-extern const __eglMustCastToProperFunctionPointerType gExtensionForwarders[MAX_NUMBER_OF_GL_EXTENSIONS] = {
-        GL_EXTENSION_LIST( GL_EXTENSION_ARRAY )
- };
+extern const __eglMustCastToProperFunctionPointerType
+        gExtensionForwarders[MAX_NUMBER_OF_GL_EXTENSIONS] = {GL_EXTENSION_LIST(GL_EXTENSION_ARRAY)};
 
 #undef GET_TLS
 #undef GL_EXTENSION_LIST
@@ -255,7 +210,4 @@ extern const __eglMustCastToProperFunctionPointerType gExtensionForwarders[MAX_N
 #undef API_ENTRY
 #undef CALL_GL_EXTENSION_API
 
-// ----------------------------------------------------------------------------
 }; // namespace android
-// ----------------------------------------------------------------------------
-

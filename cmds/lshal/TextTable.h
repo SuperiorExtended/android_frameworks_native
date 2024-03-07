@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef FRAMEWORK_NATIVE_CMDS_LSHAL_TEXT_TABLE_H_
-#define FRAMEWORK_NATIVE_CMDS_LSHAL_TEXT_TABLE_H_
+#pragma once
 
 #include <iostream>
 #include <string>
@@ -33,11 +32,11 @@ public:
     TextTableRow() {}
 
     // A row of cells.
-    TextTableRow(std::vector<std::string>&& v) : mFields(std::move(v)) {}
+    explicit TextTableRow(std::vector<std::string>&& v) : mFields(std::move(v)) {}
 
     // A single comment string.
-    TextTableRow(std::string&& s) : mLine(std::move(s)) {}
-    TextTableRow(const std::string& s) : mLine(s) {}
+    explicit TextTableRow(std::string&& s) : mLine(std::move(s)) {}
+    explicit TextTableRow(const std::string& s) : mLine(s) {}
 
     // Whether this row is an actual row of cells.
     bool isRow() const { return !fields().empty(); }
@@ -80,5 +79,3 @@ private:
 
 } // namespace lshal
 } // namespace android
-
-#endif // FRAMEWORK_NATIVE_CMDS_LSHAL_TEXT_TABLE_H_

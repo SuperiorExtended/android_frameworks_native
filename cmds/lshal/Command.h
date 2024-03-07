@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef FRAMEWORK_NATIVE_CMDS_LSHAL_COMMAND_H_
-#define FRAMEWORK_NATIVE_CMDS_LSHAL_COMMAND_H_
+#pragma once
 
 #include "utils.h"
 
@@ -27,7 +26,7 @@ class Lshal;
 // Base class for all *Commands
 class Command {
 public:
-    Command(Lshal& lshal) : mLshal(lshal) {}
+    explicit Command(Lshal& lshal) : mLshal(lshal) {}
     virtual ~Command() = default;
     // Expect optind to be set by Lshal::main and points to the next argument
     // to process.
@@ -48,5 +47,3 @@ protected:
 
 }  // namespace lshal
 }  // namespace android
-
-#endif  // FRAMEWORK_NATIVE_CMDS_LSHAL_LIST_COMMAND_H_

@@ -14,15 +14,13 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_PROCESS_STATE_H
-#define ANDROID_PROCESS_STATE_H
+#pragma once
 
 #include <binder/IBinder.h>
 #include <utils/KeyedVector.h>
-#include <utils/String8.h>
+#include <utils/Mutex.h>
 #include <utils/String16.h>
-
-#include <utils/threads.h>
+#include <utils/String8.h>
 
 #include <pthread.h>
 
@@ -31,102 +29,149 @@ namespace android {
 
 class IPCThreadState;
 
-class ProcessState : public virtual RefBase
-{
+/**
+ * Kernel binder process state. All operations here refer to kernel binder. This
+ * object is allocated per process.
+ */
+class ProcessState : public virtual RefBase {
 public:
-    static  sp<ProcessState>    self();
-    static  sp<ProcessState>    selfOrNull();
+    static sp<ProcessState> self();
+    static sp<ProcessState> selfOrNull();
+
+    static bool isVndservicemanagerEnabled();
 
     /* initWithDriver() can be used to configure libbinder to use
      * a different binder driver dev node. It must be called *before*
      * any call to ProcessState::self(). The default is /dev/vndbinder
      * for processes built with the VNDK and /dev/binder for those
      * which are not.
+     *
+     * If this is called with nullptr, the behavior is the same as selfOrNull.
      */
-    static  sp<ProcessState>    initWithDriver(const char *driver);
+    static sp<ProcessState> initWithDriver(const char* driver);
 
-            void                setContextObject(const sp<IBinder>& object);
-            sp<IBinder>         getContextObject(const sp<IBinder>& caller);
-        
-            void                setContextObject(const sp<IBinder>& object,
-                                                 const String16& name);
-            sp<IBinder>         getContextObject(const String16& name,
-                                                 const sp<IBinder>& caller);
+    sp<IBinder> getContextObject(const sp<IBinder>& caller);
 
-            void                startThreadPool();
-                        
-    typedef bool (*context_check_func)(const String16& name,
-                                       const sp<IBinder>& caller,
-                                       void* userData);
-        
-            bool                isContextManager(void) const;
-            bool                becomeContextManager(
-                                    context_check_func checkFunc,
-                                    void* userData);
+    // For main functions - dangerous for libraries to use
+    void startThreadPool();
 
-            sp<IBinder>         getStrongProxyForHandle(int32_t handle);
-            wp<IBinder>         getWeakProxyForHandle(int32_t handle);
-            void                expungeHandle(int32_t handle, IBinder* binder);
+    bool becomeContextManager();
 
-            void                spawnPooledThread(bool isMain);
-            
-            status_t            setThreadPoolMaxThreadCount(size_t maxThreads);
-            void                giveThreadPoolName();
+    sp<IBinder> getStrongProxyForHandle(int32_t handle);
+    void expungeHandle(int32_t handle, IBinder* binder);
 
-            String8             getDriverName();
+    // TODO: deprecate.
+    void spawnPooledThread(bool isMain);
 
-            ssize_t             getKernelReferences(size_t count, uintptr_t* buf);
+    // For main functions - dangerous for libraries to use
+    status_t setThreadPoolMaxThreadCount(size_t maxThreads);
+    status_t enableOnewaySpamDetection(bool enable);
+
+    // Set the name of the current thread to look like a threadpool
+    // thread. Typically this is called before joinThreadPool.
+    //
+    // TODO: remove this API, and automatically set it intelligently.
+    void giveThreadPoolName();
+
+    String8 getDriverName();
+
+    ssize_t getKernelReferences(size_t count, uintptr_t* buf);
+
+    // Only usable by the context manager.
+    // This refcount includes:
+    // 1. Strong references to the node by this and other processes
+    // 2. Temporary strong references held by the kernel during a
+    //    transaction on the node.
+    // It does NOT include local strong references to the node
+    ssize_t getStrongRefCountForNode(const sp<BpBinder>& binder);
+
+    enum class CallRestriction {
+        // all calls okay
+        NONE,
+        // log when calls are blocking
+        ERROR_IF_NOT_ONEWAY,
+        // abort process on blocking calls
+        FATAL_IF_NOT_ONEWAY,
+    };
+    // Sets calling restrictions for all transactions in this process. This must be called
+    // before any threads are spawned.
+    void setCallRestriction(CallRestriction restriction);
+
+    /**
+     * Get the max number of threads that have joined the thread pool.
+     * This includes kernel started threads, user joined threads and polling
+     * threads if used.
+     */
+    size_t getThreadPoolMaxTotalThreadCount() const;
+
+    /**
+     * Check to see if the thread pool has started.
+     */
+    bool isThreadPoolStarted() const;
+
+    enum class DriverFeature {
+        ONEWAY_SPAM_DETECTION,
+        EXTENDED_ERROR,
+    };
+    // Determine whether a feature is supported by the binder driver.
+    static bool isDriverFeatureEnabled(const DriverFeature feature);
 
 private:
+    static sp<ProcessState> init(const char* defaultDriver, bool requireDefault);
+
+    static void onFork();
+    static void parentPostFork();
+    static void childPostFork();
+
     friend class IPCThreadState;
-    
-                                ProcessState(const char* driver);
-                                ~ProcessState();
+    friend class sp<ProcessState>;
 
-                                ProcessState(const ProcessState& o);
-            ProcessState&       operator=(const ProcessState& o);
-            String8             makeBinderThreadName();
+    explicit ProcessState(const char* driver);
+    ~ProcessState();
 
-            struct handle_entry {
-                IBinder* binder;
-                RefBase::weakref_type* refs;
-            };
+    ProcessState(const ProcessState& o);
+    ProcessState& operator=(const ProcessState& o);
+    String8 makeBinderThreadName();
 
-            handle_entry*       lookupHandleLocked(int32_t handle);
+    struct handle_entry {
+        IBinder* binder;
+        RefBase::weakref_type* refs;
+    };
 
-            String8             mDriverName;
-            int                 mDriverFD;
-            void*               mVMStart;
+    handle_entry* lookupHandleLocked(int32_t handle);
 
-            // Protects thread count variable below.
-            pthread_mutex_t     mThreadCountLock;
-            pthread_cond_t      mThreadCountDecrement;
-            // Number of binder threads current executing a command.
-            size_t              mExecutingThreadsCount;
-            // Maximum number for binder threads allowed for this process.
-            size_t              mMaxThreads;
-            // Time when thread pool was emptied
-            int64_t             mStarvationStartTimeMs;
+    String8 mDriverName;
+    int mDriverFD;
+    void* mVMStart;
 
-    mutable Mutex               mLock;  // protects everything below.
+    // Protects thread count and wait variables below.
+    mutable pthread_mutex_t mThreadCountLock;
+    // Broadcast whenever mWaitingForThreads > 0
+    pthread_cond_t mThreadCountDecrement;
+    // Number of binder threads current executing a command.
+    size_t mExecutingThreadsCount;
+    // Number of threads calling IPCThreadState::blockUntilThreadAvailable()
+    size_t mWaitingForThreads;
+    // Maximum number of lazy threads to be started in the threadpool by the kernel.
+    size_t mMaxThreads;
+    // Current number of threads inside the thread pool.
+    size_t mCurrentThreads;
+    // Current number of pooled threads inside the thread pool.
+    size_t mKernelStartedThreads;
+    // Time when thread pool was emptied
+    int64_t mStarvationStartTimeMs;
 
-            Vector<handle_entry>mHandleToObject;
+    mutable Mutex mLock; // protects everything below.
 
-            bool                mManagesContexts;
-            context_check_func  mBinderContextCheckFunc;
-            void*               mBinderContextUserData;
+    Vector<handle_entry> mHandleToObject;
 
-            KeyedVector<String16, sp<IBinder> >
-                                mContexts;
+    bool mForked;
+    bool mThreadPoolStarted;
+    volatile int32_t mThreadPoolSeq;
 
-
-            String8             mRootDir;
-            bool                mThreadPoolStarted;
-    volatile int32_t            mThreadPoolSeq;
+    CallRestriction mCallRestriction;
 };
-    
-}; // namespace android
+
+} // namespace android
 
 // ---------------------------------------------------------------------------
-
-#endif // ANDROID_PROCESS_STATE_H

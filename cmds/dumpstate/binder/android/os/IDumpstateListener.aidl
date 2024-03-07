@@ -19,21 +19,59 @@ package android.os;
 /**
   * Listener for dumpstate events.
   *
+  * <p>When bugreport creation is complete one of {@code onError} or {@code onFinished} is called.
+  *
+  *
   * {@hide}
   */
 interface IDumpstateListener {
-    void onProgressUpdated(int progress);
-    void onMaxProgressUpdated(int maxProgress);
+    /**
+     * Called when there is a progress update.
+     *
+     * @param progress the progress in [0, 100]
+     */
+    oneway void onProgress(int progress);
+
+    // NOTE: If you add to or change these error codes, please also change the corresponding enums
+    // in system server, in BugreportManager.java.
+
+    /* Options specified are invalid or incompatible */
+    const int BUGREPORT_ERROR_INVALID_INPUT = 1;
+
+    /* Bugreport encountered a runtime error */
+    const int BUGREPORT_ERROR_RUNTIME_ERROR = 2;
+
+    /* User denied consent to share the bugreport with the specified app */
+    const int BUGREPORT_ERROR_USER_DENIED_CONSENT = 3;
+
+    /* The request to get user consent timed out */
+    const int BUGREPORT_ERROR_USER_CONSENT_TIMED_OUT = 4;
+
+    /* There is currently a bugreport running. The caller should try again later. */
+    const int BUGREPORT_ERROR_ANOTHER_REPORT_IN_PROGRESS = 5;
+
+    /* There is no bugreport to retrieve for the given caller. */
+    const int BUGREPORT_ERROR_NO_BUGREPORT_TO_RETRIEVE = 6;
 
     /**
-    * Called after every section is complete.
-    * @param  name          section name
-    * @param  status        values from status_t
-    *                       {@code OK} section completed successfully
-    *                       {@code TIMEOUT} dump timed out
-    *                       {@code != OK} error
-    * @param  size          size in bytes, may be invalid if status != OK
-    * @param  durationMs    duration in ms
-    */
-    void onSectionComplete(@utf8InCpp String name, int status, int size, int durationMs);
+     * Called on an error condition with one of the error codes listed above.
+     */
+    oneway void onError(int errorCode);
+
+    /**
+     * Called when taking bugreport finishes successfully.
+     *
+     * @param bugreportFile The location of the bugreport file
+     */
+    oneway void onFinished(@utf8InCpp String bugreportFile);
+
+    /**
+     * Called when screenshot is taken.
+     */
+    oneway void onScreenshotTaken(boolean success);
+
+    /**
+     * Called when ui intensive bugreport dumps are finished.
+     */
+    oneway void onUiIntensiveBugreportDumpsFinished();
 }

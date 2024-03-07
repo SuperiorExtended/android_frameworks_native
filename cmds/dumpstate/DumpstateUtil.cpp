@@ -48,11 +48,26 @@ static bool waitpid_with_timeout(pid_t pid, int timeout_ms, int* status) {
     sigemptyset(&child_mask);
     sigaddset(&child_mask, SIGCHLD);
 
+    // block SIGCHLD before we check if a process has exited
     if (sigprocmask(SIG_BLOCK, &child_mask, &old_mask) == -1) {
         printf("*** sigprocmask failed: %s\n", strerror(errno));
         return false;
     }
 
+    // if the child has exited already, handle and reset signals before leaving
+    pid_t child_pid = waitpid(pid, status, WNOHANG);
+    if (child_pid != pid) {
+        if (child_pid > 0) {
+            printf("*** Waiting for pid %d, got pid %d instead\n", pid, child_pid);
+            sigprocmask(SIG_SETMASK, &old_mask, nullptr);
+            return false;
+        }
+    } else {
+        sigprocmask(SIG_SETMASK, &old_mask, nullptr);
+        return true;
+    }
+
+    // wait for a SIGCHLD
     timespec ts;
     ts.tv_sec = MSEC_TO_SEC(timeout_ms);
     ts.tv_nsec = (timeout_ms % 1000) * 1000000;
@@ -76,7 +91,7 @@ static bool waitpid_with_timeout(pid_t pid, int timeout_ms, int* status) {
         return false;
     }
 
-    pid_t child_pid = waitpid(pid, status, WNOHANG);
+    child_pid = waitpid(pid, status, WNOHANG);
     if (child_pid != pid) {
         if (child_pid != -1) {
             printf("*** Waiting for pid %d, got pid %d instead\n", pid, child_pid);
@@ -124,6 +139,12 @@ CommandOptions::CommandOptionsBuilder& CommandOptions::CommandOptionsBuilder::Re
     return *this;
 }
 
+CommandOptions::CommandOptionsBuilder&
+CommandOptions::CommandOptionsBuilder::CloseAllFileDescriptorsOnExec() {
+    values.close_all_fds_on_exec_ = true;
+    return *this;
+}
+
 CommandOptions::CommandOptionsBuilder& CommandOptions::CommandOptionsBuilder::Log(
     const std::string& message) {
     values.logging_message_ = message;
@@ -137,6 +158,7 @@ CommandOptions CommandOptions::CommandOptionsBuilder::Build() {
 CommandOptions::CommandOptionsValues::CommandOptionsValues(int64_t timeout_ms)
     : timeout_ms_(timeout_ms),
       always_(false),
+      close_all_fds_on_exec_(false),
       account_mode_(DONT_DROP_ROOT),
       output_mode_(NORMAL_OUTPUT),
       logging_message_("") {
@@ -155,6 +177,10 @@ int64_t CommandOptions::TimeoutInMs() const {
 
 bool CommandOptions::Always() const {
     return values.always_;
+}
+
+bool CommandOptions::ShouldCloseAllFileDescriptorsOnExec() const {
+    return values.close_all_fds_on_exec_;
 }
 
 PrivilegeMode CommandOptions::PrivilegeMode() const {
@@ -180,6 +206,10 @@ CommandOptions::CommandOptionsBuilder CommandOptions::WithTimeoutInMs(int64_t ti
 std::string PropertiesHelper::build_type_ = "";
 int PropertiesHelper::dry_run_ = -1;
 int PropertiesHelper::unroot_ = -1;
+int PropertiesHelper::parallel_run_ = -1;
+#if !defined(__ANDROID_VNDK__)
+int PropertiesHelper::strict_run_ = -1;
+#endif
 
 bool PropertiesHelper::IsUserBuild() {
     if (build_type_.empty()) {
@@ -202,6 +232,24 @@ bool PropertiesHelper::IsUnroot() {
     return unroot_ == 1;
 }
 
+bool PropertiesHelper::IsParallelRun() {
+    if (parallel_run_ == -1) {
+        parallel_run_ = android::base::GetBoolProperty("dumpstate.parallel_run",
+                /* default_value = */true) ? 1 : 0;
+    }
+    return parallel_run_ == 1;
+}
+
+#if !defined(__ANDROID_VNDK__)
+bool PropertiesHelper::IsStrictRun() {
+    if (strict_run_ == -1) {
+        // Defaults to using stricter timeouts.
+        strict_run_ = android::base::GetBoolProperty("dumpstate.strict_run", true) ? 1 : 0;
+    }
+    return strict_run_ == 1;
+}
+#endif
+
 int DumpFileToFd(int out_fd, const std::string& title, const std::string& path) {
     android::base::unique_fd fd(TEMP_FAILURE_RETRY(open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC)));
     if (fd.get() < 0) {
@@ -212,7 +260,6 @@ int DumpFileToFd(int out_fd, const std::string& title, const std::string& path) 
             dprintf(out_fd, "*** Error dumping %s (%s): %s\n", path.c_str(), title.c_str(),
                     strerror(err));
         }
-        fsync(out_fd);
         return -1;
     }
     return DumpFileFromFdToFd(title, path, fd.get(), out_fd, PropertiesHelper::IsDryRun());
@@ -260,7 +307,6 @@ int RunCommandToFd(int fd, const std::string& title, const std::vector<std::stri
 
     if (!title.empty()) {
         dprintf(fd, "------ %s (%s) ------\n", title.c_str(), command);
-        fsync(fd);
     }
 
     const std::string& logging_message = options.LoggingMessage();
@@ -268,7 +314,8 @@ int RunCommandToFd(int fd, const std::string& title, const std::vector<std::stri
         MYLOGI(logging_message.c_str(), command_string.c_str());
     }
 
-    bool silent = (options.OutputMode() == REDIRECT_TO_STDERR);
+    bool silent = (options.OutputMode() == REDIRECT_TO_STDERR ||
+                   options.ShouldCloseAllFileDescriptorsOnExec());
     bool redirecting_to_fd = STDOUT_FILENO != fd;
 
     if (PropertiesHelper::IsDryRun() && !options.Always()) {
@@ -278,14 +325,13 @@ int RunCommandToFd(int fd, const std::string& title, const std::vector<std::stri
             // There is no title, but we should still print a dry-run message
             dprintf(fd, "%s: skipped on dry run\n", command_string.c_str());
         }
-        fsync(fd);
         return 0;
     }
 
     const char* path = args[0];
 
     uint64_t start = Nanotime();
-    pid_t pid = fork();
+    pid_t pid = vfork();
 
     /* handle error case */
     if (pid < 0) {
@@ -302,10 +348,30 @@ int RunCommandToFd(int fd, const std::string& title, const std::vector<std::stri
                         strerror(errno));
             }
             MYLOGE("*** could not drop root before running %s: %s\n", command, strerror(errno));
-            return -1;
+            _exit(EXIT_FAILURE);
         }
 
-        if (silent) {
+        if (options.ShouldCloseAllFileDescriptorsOnExec()) {
+            int devnull_fd = TEMP_FAILURE_RETRY(open("/dev/null", O_RDONLY));
+            TEMP_FAILURE_RETRY(dup2(devnull_fd, STDIN_FILENO));
+            close(devnull_fd);
+            devnull_fd = TEMP_FAILURE_RETRY(open("/dev/null", O_WRONLY));
+            TEMP_FAILURE_RETRY(dup2(devnull_fd, STDOUT_FILENO));
+            TEMP_FAILURE_RETRY(dup2(devnull_fd, STDERR_FILENO));
+            close(devnull_fd);
+            // This is to avoid leaking FDs that, accidentally, have not been
+            // marked as O_CLOEXEC. Leaking FDs across exec can cause failures
+            // when execing a process that has a SELinux auto_trans rule.
+            // Here we assume that the dumpstate process didn't open more than
+            // 1000 FDs. In theory we could iterate through /proc/self/fd/, but
+            // doing that in a fork-safe way is too complex and not worth it
+            // (opendir()/readdir() do heap allocations and take locks).
+            for (int i = 0; i < 1000; i++) {
+                if (i != STDIN_FILENO && i!= STDOUT_FILENO && i != STDERR_FILENO) {
+                    close(i);
+                }
+            }
+        } else if (silent) {
             // Redirects stdout to stderr
             TEMP_FAILURE_RETRY(dup2(STDERR_FILENO, STDOUT_FILENO));
         } else if (redirecting_to_fd) {
@@ -335,7 +401,6 @@ int RunCommandToFd(int fd, const std::string& title, const std::vector<std::stri
     /* handle parent case */
     int status;
     bool ret = waitpid_with_timeout(pid, options.TimeoutInMs(), &status);
-    fsync(fd);
 
     uint64_t elapsed = Nanotime() - start;
     if (!ret) {
@@ -376,34 +441,6 @@ int RunCommandToFd(int fd, const std::string& title, const std::vector<std::stri
     }
 
     return status;
-}
-
-int GetPidByName(const std::string& ps_name) {
-    DIR* proc_dir;
-    struct dirent* ps;
-    unsigned int pid;
-    std::string cmdline;
-
-    if (!(proc_dir = opendir("/proc"))) {
-        MYLOGE("Can't open /proc\n");
-        return -1;
-    }
-
-    while ((ps = readdir(proc_dir))) {
-        if (!(pid = atoi(ps->d_name))) {
-            continue;
-        }
-        android::base::ReadFileToString("/proc/" + std::string(ps->d_name) + "/cmdline", &cmdline);
-        if (cmdline.find(ps_name) == std::string::npos) {
-            continue;
-        } else {
-            closedir(proc_dir);
-            return pid;
-        }
-    }
-    MYLOGE("can't find the pid\n");
-    closedir(proc_dir);
-    return -1;
 }
 
 }  // namespace dumpstate

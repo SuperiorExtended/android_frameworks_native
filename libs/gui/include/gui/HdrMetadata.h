@@ -17,6 +17,9 @@
 #pragma once
 
 #include <stdint.h>
+#include <ui/GraphicTypes.h>
+#include <optional>
+#include <vector>
 
 #include <system/graphics.h>
 #include <utils/Flattenable.h>
@@ -26,12 +29,15 @@ namespace android {
 struct HdrMetadata : public LightFlattenable<HdrMetadata> {
     enum Type : uint32_t {
         SMPTE2086 = 1 << 0,
-        CTA861_3  = 1 << 1,
+        CTA861_3 = 1 << 1,
+        HDR10PLUS = 1 << 2,
     };
+
     uint32_t validTypes{0};
 
     android_smpte2086_metadata smpte2086{};
     android_cta861_3_metadata cta8613{};
+    std::vector<uint8_t> hdr10plus{};
 
     // LightFlattenable
     bool isFixedSize() const { return false; }
@@ -39,7 +45,29 @@ struct HdrMetadata : public LightFlattenable<HdrMetadata> {
     status_t flatten(void* buffer, size_t size) const;
     status_t unflatten(void const* buffer, size_t size);
 
+    std::optional<ui::Smpte2086> getSmpte2086() const {
+        if (validTypes & Type::SMPTE2086) {
+            return ui::translate(smpte2086);
+        }
+        return {};
+    }
+
+    std::optional<ui::Cta861_3> getCta8613() const {
+        if (validTypes & Type::CTA861_3) {
+            return ui::translate(cta8613);
+        }
+        return {};
+    }
+
+    std::optional<std::vector<uint8_t>> getHdr10Plus() const {
+        if (validTypes & Type::HDR10PLUS) {
+            return hdr10plus;
+        }
+        return {};
+    }
+
     bool operator==(const HdrMetadata& rhs) const;
+    bool operator!=(const HdrMetadata& rhs) const { return !(*this == rhs); }
 };
 
 } // namespace android

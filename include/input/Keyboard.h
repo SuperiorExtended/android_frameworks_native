@@ -14,25 +14,15 @@
  * limitations under the License.
  */
 
-#ifndef _LIBINPUT_KEYBOARD_H
-#define _LIBINPUT_KEYBOARD_H
+#pragma once
 
 #include <input/Input.h>
 #include <input/InputDevice.h>
 #include <input/InputEventLabels.h>
+#include <input/PropertyMap.h>
 #include <utils/Errors.h>
-#include <utils/PropertyMap.h>
 
 namespace android {
-
-enum {
-    /* Device id of the built in keyboard. */
-    DEVICE_ID_BUILT_IN_KEYBOARD = 0,
-
-    /* Device id of a generic virtual keyboard with a full layout that can be used
-     * to synthesize key events. */
-    DEVICE_ID_VIRTUAL_KEYBOARD = -1,
-};
 
 class KeyLayoutMap;
 class KeyCharacterMap;
@@ -43,10 +33,10 @@ class KeyCharacterMap;
 class KeyMap {
 public:
     std::string keyLayoutFile;
-    sp<KeyLayoutMap> keyLayoutMap;
+    std::shared_ptr<KeyLayoutMap> keyLayoutMap;
 
     std::string keyCharacterMapFile;
-    sp<KeyCharacterMap> keyCharacterMap;
+    std::shared_ptr<KeyCharacterMap> keyCharacterMap;
 
     KeyMap();
     ~KeyMap();
@@ -70,9 +60,7 @@ private:
     bool probeKeyMap(const InputDeviceIdentifier& deviceIdentifier, const std::string& name);
     status_t loadKeyLayout(const InputDeviceIdentifier& deviceIdentifier, const std::string& name);
     status_t loadKeyCharacterMap(const InputDeviceIdentifier& deviceIdentifier,
-            const std::string& name);
-    std::string getPath(const InputDeviceIdentifier& deviceIdentifier,
-            const std::string& name, InputDeviceConfigurationFileType type);
+                                 const std::string& name);
 };
 
 /**
@@ -99,5 +87,3 @@ extern int32_t normalizeMetaState(int32_t oldMetaState);
 extern bool isMetaKey(int32_t keyCode);
 
 } // namespace android
-
-#endif // _LIBINPUT_KEYBOARD_H

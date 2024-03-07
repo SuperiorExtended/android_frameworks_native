@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_PARCEL_FILE_DESCRIPTOR_H_
-#define ANDROID_PARCEL_FILE_DESCRIPTOR_H_
+#pragma once
 
 #include <android-base/unique_fd.h>
 #include <binder/Parcel.h>
@@ -31,7 +30,8 @@ class ParcelFileDescriptor : public android::Parcelable {
 public:
     ParcelFileDescriptor();
     explicit ParcelFileDescriptor(android::base::unique_fd fd);
-    explicit ParcelFileDescriptor(ParcelFileDescriptor&& other) : mFd(std::move(other.mFd)) { }
+    ParcelFileDescriptor(ParcelFileDescriptor&& other) noexcept : mFd(std::move(other.mFd)) { }
+    ParcelFileDescriptor& operator=(ParcelFileDescriptor&& other) noexcept = default;
     ~ParcelFileDescriptor() override;
 
     int get() const { return mFd.get(); }
@@ -42,11 +42,28 @@ public:
     android::status_t writeToParcel(android::Parcel* parcel) const override;
     android::status_t readFromParcel(const android::Parcel* parcel) override;
 
+    inline std::string toString() const { return "ParcelFileDescriptor:" + std::to_string(get()); }
+    inline bool operator!=(const ParcelFileDescriptor& rhs) const {
+        return mFd.get() != rhs.mFd.get();
+    }
+    inline bool operator<(const ParcelFileDescriptor& rhs) const {
+        return mFd.get() < rhs.mFd.get();
+    }
+    inline bool operator<=(const ParcelFileDescriptor& rhs) const {
+        return mFd.get() <= rhs.mFd.get();
+    }
+    inline bool operator==(const ParcelFileDescriptor& rhs) const {
+        return mFd.get() == rhs.mFd.get();
+    }
+    inline bool operator>(const ParcelFileDescriptor& rhs) const {
+        return mFd.get() > rhs.mFd.get();
+    }
+    inline bool operator>=(const ParcelFileDescriptor& rhs) const {
+        return mFd.get() >= rhs.mFd.get();
+    }
 private:
     android::base::unique_fd mFd;
 };
 
 } // namespace os
 } // namespace android
-
-#endif // ANDROID_OS_PARCEL_FILE_DESCRIPTOR_H_

@@ -18,7 +18,7 @@
 //#define LOG_NDEBUG 0
 
 // Log debug messages about acceleration.
-#define DEBUG_ACCELERATION 0
+static constexpr bool DEBUG_ACCELERATION = false;
 
 #include <math.h>
 #include <limits.h>
@@ -37,6 +37,10 @@ VelocityControl::VelocityControl() {
     reset();
 }
 
+VelocityControlParameters& VelocityControl::getParameters() {
+    return mParameters;
+}
+
 void VelocityControl::setParameters(const VelocityControlParameters& parameters) {
     mParameters = parameters;
     reset();
@@ -44,34 +48,38 @@ void VelocityControl::setParameters(const VelocityControlParameters& parameters)
 
 void VelocityControl::reset() {
     mLastMovementTime = LLONG_MIN;
-    mRawPosition.x = 0;
-    mRawPosition.y = 0;
+    mRawPositionX = 0;
+    mRawPositionY = 0;
     mVelocityTracker.clear();
 }
 
 void VelocityControl::move(nsecs_t eventTime, float* deltaX, float* deltaY) {
     if ((deltaX && *deltaX) || (deltaY && *deltaY)) {
         if (eventTime >= mLastMovementTime + STOP_TIME) {
-#if DEBUG_ACCELERATION
-            ALOGD("VelocityControl: stopped, last movement was %0.3fms ago",
-                    (eventTime - mLastMovementTime) * 0.000001f);
-#endif
+            if (DEBUG_ACCELERATION && mLastMovementTime != LLONG_MIN) {
+                ALOGD("VelocityControl: stopped, last movement was %0.3fms ago",
+                           (eventTime - mLastMovementTime) * 0.000001f);
+            }
             reset();
         }
 
         mLastMovementTime = eventTime;
         if (deltaX) {
-            mRawPosition.x += *deltaX;
+            mRawPositionX += *deltaX;
         }
         if (deltaY) {
-            mRawPosition.y += *deltaY;
+            mRawPositionY += *deltaY;
         }
-        mVelocityTracker.addMovement(eventTime, BitSet32(BitSet32::valueForBit(0)), &mRawPosition);
+        mVelocityTracker.addMovement(eventTime, /*pointerId=*/0, AMOTION_EVENT_AXIS_X,
+                                     mRawPositionX);
+        mVelocityTracker.addMovement(eventTime, /*pointerId=*/0, AMOTION_EVENT_AXIS_Y,
+                                     mRawPositionY);
 
-        float vx, vy;
+        std::optional<float> vx = mVelocityTracker.getVelocity(AMOTION_EVENT_AXIS_X, 0);
+        std::optional<float> vy = mVelocityTracker.getVelocity(AMOTION_EVENT_AXIS_Y, 0);
         float scale = mParameters.scale;
-        if (mVelocityTracker.getVelocity(0, &vx, &vy)) {
-            float speed = hypotf(vx, vy) * scale;
+        if (vx && vy) {
+            float speed = hypotf(*vx, *vy) * scale;
             if (speed >= mParameters.highThreshold) {
                 // Apply full acceleration above the high speed threshold.
                 scale *= mParameters.acceleration;
@@ -83,19 +91,19 @@ void VelocityControl::move(nsecs_t eventTime, float* deltaX, float* deltaY) {
                         * (mParameters.acceleration - 1);
             }
 
-#if DEBUG_ACCELERATION
-            ALOGD("VelocityControl(%0.3f, %0.3f, %0.3f, %0.3f): "
-                    "vx=%0.3f, vy=%0.3f, speed=%0.3f, accel=%0.3f",
-                    mParameters.scale, mParameters.lowThreshold, mParameters.highThreshold,
-                    mParameters.acceleration,
-                    vx, vy, speed, scale / mParameters.scale);
-#endif
+            if (DEBUG_ACCELERATION) {
+                ALOGD("VelocityControl(%0.3f, %0.3f, %0.3f, %0.3f): "
+                      "vx=%0.3f, vy=%0.3f, speed=%0.3f, accel=%0.3f",
+                      mParameters.scale, mParameters.lowThreshold, mParameters.highThreshold,
+                      mParameters.acceleration, *vx, *vy, speed, scale / mParameters.scale);
+            }
+
         } else {
-#if DEBUG_ACCELERATION
-            ALOGD("VelocityControl(%0.3f, %0.3f, %0.3f, %0.3f): unknown velocity",
-                    mParameters.scale, mParameters.lowThreshold, mParameters.highThreshold,
-                    mParameters.acceleration);
-#endif
+            if (DEBUG_ACCELERATION) {
+                ALOGD("VelocityControl(%0.3f, %0.3f, %0.3f, %0.3f): unknown velocity",
+                        mParameters.scale, mParameters.lowThreshold, mParameters.highThreshold,
+                        mParameters.acceleration);
+            }
         }
 
         if (deltaX) {

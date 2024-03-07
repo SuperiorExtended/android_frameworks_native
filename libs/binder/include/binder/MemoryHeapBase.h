@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_MEMORY_HEAP_BASE_H
-#define ANDROID_MEMORY_HEAP_BASE_H
+#pragma once
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -27,15 +26,30 @@ namespace android {
 
 // ---------------------------------------------------------------------------
 
-class MemoryHeapBase : public virtual BnMemoryHeap
+class MemoryHeapBase : public BnMemoryHeap
 {
 public:
+    static constexpr auto MEMFD_ALLOW_SEALING_FLAG = 0x00000800;
     enum {
         READ_ONLY = IMemoryHeap::READ_ONLY,
         // memory won't be mapped locally, but will be mapped in the remote
         // process.
         DONT_MAP_LOCALLY = 0x00000100,
-        NO_CACHING = 0x00000200
+        NO_CACHING = 0x00000200,
+        // Bypass ashmem-libcutils to create a memfd shared region.
+        // Ashmem-libcutils will eventually migrate to memfd.
+        // Memfd has security benefits and supports file sealing.
+        // Calling process will need to modify selinux permissions to
+        // open access to tmpfs files. See audioserver for examples.
+        // This is only valid for size constructor.
+        // For host compilation targets, memfd is stubbed in favor of /tmp
+        // files so sealing is not enforced.
+        FORCE_MEMFD = 0x00000400,
+        // Default opt-out of sealing behavior in memfd to avoid potential DOS.
+        // Clients of shared files can seal at anytime via syscall, leading to
+        // TOC/TOU issues if additional seals prevent access from the creating
+        // process. Alternatively, seccomp fcntl().
+        MEMFD_ALLOW_SEALING = FORCE_MEMFD | MEMFD_ALLOW_SEALING_FLAG
     };
 
     /*
@@ -47,37 +61,31 @@ public:
     /*
      * maps memory from the given device
      */
-    MemoryHeapBase(const char* device, size_t size = 0, uint32_t flags = 0);
+    explicit MemoryHeapBase(const char* device, size_t size = 0, uint32_t flags = 0);
 
     /*
      * maps memory from ashmem, with the given name for debugging
+     * if the READ_ONLY flag is set, the memory will be writeable by the calling process,
+     * but not by others. this is NOT the case with the other ctors.
      */
-    MemoryHeapBase(size_t size, uint32_t flags = 0, char const* name = nullptr);
+    explicit MemoryHeapBase(size_t size, uint32_t flags = 0, char const* name = nullptr);
 
     virtual ~MemoryHeapBase();
 
     /* implement IMemoryHeap interface */
-    virtual int         getHeapID() const;
+    int         getHeapID() const override;
 
     /* virtual address of the heap. returns MAP_FAILED in case of error */
-    virtual void*       getBase() const;
+    void*       getBase() const override;
 
-    virtual size_t      getSize() const;
-    virtual uint32_t    getFlags() const;
-            off_t       getOffset() const override;
+    size_t      getSize() const override;
+    uint32_t    getFlags() const override;
+    off_t       getOffset() const override;
 
     const char*         getDevice() const;
 
     /* this closes this heap -- use carefully */
     void dispose();
-
-    /* this is only needed as a workaround, use only if you know
-     * what you are doing */
-    status_t setDevice(const char* device) {
-        if (mDevice == nullptr)
-            mDevice = device;
-        return mDevice ? NO_ERROR : ALREADY_EXISTS;
-    }
 
 protected:
             MemoryHeapBase();
@@ -86,7 +94,7 @@ protected:
             int flags = 0, const char* device = nullptr);
 
 private:
-    status_t mapfd(int fd, size_t size, off_t offset = 0);
+    status_t mapfd(int fd, bool writeableByCaller, size_t size, off_t offset = 0);
 
     int         mFD;
     size_t      mSize;
@@ -98,6 +106,4 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-}; // namespace android
-
-#endif // ANDROID_MEMORY_HEAP_BASE_H
+} // namespace android

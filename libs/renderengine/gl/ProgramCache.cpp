@@ -77,9 +77,40 @@ Formatter& dedent(Formatter& f) {
     return f;
 }
 
-void ProgramCache::primeCache(bool useColorManagement) {
+void ProgramCache::primeCache(
+        EGLContext context, bool useColorManagement, bool toneMapperShaderOnly) {
+    auto& cache = mCaches[context];
     uint32_t shaderCount = 0;
-    uint32_t keyMask = Key::BLEND_MASK | Key::OPACITY_MASK | Key::ALPHA_MASK | Key::TEXTURE_MASK;
+
+    if (toneMapperShaderOnly) {
+        Key shaderKey;
+        // base settings used by HDR->SDR tonemap only
+        shaderKey.set(Key::BLEND_MASK | Key::INPUT_TRANSFORM_MATRIX_MASK |
+                      Key::OUTPUT_TRANSFORM_MATRIX_MASK | Key::OUTPUT_TF_MASK |
+                      Key::OPACITY_MASK | Key::ALPHA_MASK |
+                      Key::ROUNDED_CORNERS_MASK | Key::TEXTURE_MASK,
+                      Key::BLEND_NORMAL | Key::INPUT_TRANSFORM_MATRIX_ON |
+                      Key::OUTPUT_TRANSFORM_MATRIX_ON | Key::OUTPUT_TF_SRGB |
+                      Key::OPACITY_OPAQUE | Key::ALPHA_EQ_ONE |
+                      Key::ROUNDED_CORNERS_OFF | Key::TEXTURE_EXT);
+        for (int i = 0; i < 4; i++) {
+            // Cache input transfer for HLG & ST2084
+            shaderKey.set(Key::INPUT_TF_MASK, (i & 1) ?
+                    Key::INPUT_TF_HLG : Key::INPUT_TF_ST2084);
+
+            // Cache Y410 input on or off
+            shaderKey.set(Key::Y410_BT2020_MASK, (i & 2) ?
+                    Key::Y410_BT2020_ON : Key::Y410_BT2020_OFF);
+            if (cache.count(shaderKey) == 0) {
+                cache.emplace(shaderKey, generateProgram(shaderKey));
+                shaderCount++;
+            }
+        }
+        return;
+    }
+
+    uint32_t keyMask = Key::BLEND_MASK | Key::OPACITY_MASK | Key::ALPHA_MASK | Key::TEXTURE_MASK
+        | Key::ROUNDED_CORNERS_MASK;
     // Prime the cache for all combinations of the above masks,
     // leaving off the experimental color matrix mask options.
 
@@ -91,8 +122,8 @@ void ProgramCache::primeCache(bool useColorManagement) {
         if (tex != Key::TEXTURE_OFF && tex != Key::TEXTURE_EXT && tex != Key::TEXTURE_2D) {
             continue;
         }
-        if (mCache.count(shaderKey) == 0) {
-            mCache.emplace(shaderKey, generateProgram(shaderKey));
+        if (cache.count(shaderKey) == 0) {
+            cache.emplace(shaderKey, generateProgram(shaderKey));
             shaderCount++;
         }
     }
@@ -100,16 +131,23 @@ void ProgramCache::primeCache(bool useColorManagement) {
     // Prime for sRGB->P3 conversion
     if (useColorManagement) {
         Key shaderKey;
-        shaderKey.set(Key::BLEND_MASK | Key::TEXTURE_MASK | Key::OUTPUT_TRANSFORM_MATRIX_MASK |
-                              Key::INPUT_TF_MASK | Key::OUTPUT_TF_MASK,
-                      Key::BLEND_PREMULT | Key::TEXTURE_EXT | Key::OUTPUT_TRANSFORM_MATRIX_ON |
-                              Key::INPUT_TF_SRGB | Key::OUTPUT_TF_SRGB);
-        for (int i = 0; i < 4; i++) {
+        shaderKey.set(Key::BLEND_MASK | Key::OUTPUT_TRANSFORM_MATRIX_MASK | Key::INPUT_TF_MASK |
+                              Key::OUTPUT_TF_MASK,
+                      Key::BLEND_PREMULT | Key::OUTPUT_TRANSFORM_MATRIX_ON | Key::INPUT_TF_SRGB |
+                              Key::OUTPUT_TF_SRGB);
+        for (int i = 0; i < 16; i++) {
             shaderKey.set(Key::OPACITY_MASK,
                           (i & 1) ? Key::OPACITY_OPAQUE : Key::OPACITY_TRANSLUCENT);
             shaderKey.set(Key::ALPHA_MASK, (i & 2) ? Key::ALPHA_LT_ONE : Key::ALPHA_EQ_ONE);
-            if (mCache.count(shaderKey) == 0) {
-                mCache.emplace(shaderKey, generateProgram(shaderKey));
+
+            // Cache rounded corners
+            shaderKey.set(Key::ROUNDED_CORNERS_MASK,
+                          (i & 4) ? Key::ROUNDED_CORNERS_ON : Key::ROUNDED_CORNERS_OFF);
+
+            // Cache texture off option for window transition
+            shaderKey.set(Key::TEXTURE_MASK, (i & 8) ? Key::TEXTURE_EXT : Key::TEXTURE_OFF);
+            if (cache.count(shaderKey) == 0) {
+                cache.emplace(shaderKey, generateProgram(shaderKey));
                 shaderCount++;
             }
         }
@@ -141,12 +179,18 @@ ProgramCache::Key ProgramCache::computeKey(const Description& description) {
             .set(Key::Key::OUTPUT_TRANSFORM_MATRIX_MASK,
                  description.hasOutputTransformMatrix() || description.hasColorMatrix()
                          ? Key::OUTPUT_TRANSFORM_MATRIX_ON
-                         : Key::OUTPUT_TRANSFORM_MATRIX_OFF);
-
+                         : Key::OUTPUT_TRANSFORM_MATRIX_OFF)
+            .set(Key::Key::DISPLAY_COLOR_TRANSFORM_MATRIX_MASK,
+                 description.hasDisplayColorMatrix() ? Key::DISPLAY_COLOR_TRANSFORM_MATRIX_ON
+                                                     : Key::DISPLAY_COLOR_TRANSFORM_MATRIX_OFF)
+            .set(Key::ROUNDED_CORNERS_MASK,
+                 description.cornerRadius > 0 ? Key::ROUNDED_CORNERS_ON : Key::ROUNDED_CORNERS_OFF)
+            .set(Key::SHADOW_MASK, description.drawShadows ? Key::SHADOW_ON : Key::SHADOW_OFF);
     needs.set(Key::Y410_BT2020_MASK,
               description.isY410BT2020 ? Key::Y410_BT2020_ON : Key::Y410_BT2020_OFF);
 
-    if (needs.hasTransformMatrix() || (needs.getInputTF() != needs.getOutputTF())) {
+    if (needs.hasTransformMatrix() ||
+        (description.inputTransferFunction != description.outputTransferFunction)) {
         switch (description.inputTransferFunction) {
             case Description::TransferFunction::LINEAR:
             default:
@@ -211,7 +255,7 @@ void ProgramCache::generateEOTF(Formatter& fs, const Key& needs) {
                     const highp float c2 = (2413.0 / 4096.0) * 32.0;
                     const highp float c3 = (2392.0 / 4096.0) * 32.0;
 
-                    highp vec3 tmp = pow(color, 1.0 / vec3(m2));
+                    highp vec3 tmp = pow(clamp(color, 0.0, 1.0), 1.0 / vec3(m2));
                     tmp = max(tmp - c1, 0.0) / (c2 - c3 * tmp);
                     return pow(tmp, 1.0 / vec3(m1));
                 }
@@ -297,9 +341,9 @@ void ProgramCache::generateToneMappingProcess(Formatter& fs, const Key& needs) {
                 default:
                     fs << R"__SHADER__(
                         highp vec3 ToneMap(highp vec3 color) {
-                            const float maxMasteringLumi = 1000.0;
-                            const float maxContentLumi = 1000.0;
-                            const float maxInLumi = min(maxMasteringLumi, maxContentLumi);
+                            float maxMasteringLumi = maxMasteringLuminance;
+                            float maxContentLumi = maxContentLuminance;
+                            float maxInLumi = min(maxMasteringLumi, maxContentLumi);
                             float maxOutLumi = displayMaxLuminance;
 
                             float nits = color.y;
@@ -509,16 +553,33 @@ void ProgramCache::generateOETF(Formatter& fs, const Key& needs) {
 
 String8 ProgramCache::generateVertexShader(const Key& needs) {
     Formatter vs;
-    if (needs.isTexturing()) {
+    if (needs.hasTextureCoords()) {
         vs << "attribute vec4 texCoords;"
            << "varying vec2 outTexCoords;";
+    }
+    if (needs.hasRoundedCorners()) {
+        vs << "attribute lowp vec4 cropCoords;";
+        vs << "varying lowp vec2 outCropCoords;";
+    }
+    if (needs.drawShadows()) {
+        vs << "attribute lowp vec4 shadowColor;";
+        vs << "varying lowp vec4 outShadowColor;";
+        vs << "attribute lowp vec4 shadowParams;";
+        vs << "varying lowp vec3 outShadowParams;";
     }
     vs << "attribute vec4 position;"
        << "uniform mat4 projection;"
        << "uniform mat4 texture;"
        << "void main(void) {" << indent << "gl_Position = projection * position;";
-    if (needs.isTexturing()) {
+    if (needs.hasTextureCoords()) {
         vs << "outTexCoords = (texture * texCoords).st;";
+    }
+    if (needs.hasRoundedCorners()) {
+        vs << "outCropCoords = cropCoords.st;";
+    }
+    if (needs.drawShadows()) {
+        vs << "outShadowColor = shadowColor;";
+        vs << "outShadowParams = shadowParams.xyz;";
     }
     vs << dedent << "}";
     return vs.getString();
@@ -534,11 +595,55 @@ String8 ProgramCache::generateFragmentShader(const Key& needs) {
     fs << "precision mediump float;";
 
     if (needs.getTextureTarget() == Key::TEXTURE_EXT) {
-        fs << "uniform samplerExternalOES sampler;"
-           << "varying vec2 outTexCoords;";
+        fs << "uniform samplerExternalOES sampler;";
     } else if (needs.getTextureTarget() == Key::TEXTURE_2D) {
-        fs << "uniform sampler2D sampler;"
-           << "varying vec2 outTexCoords;";
+        fs << "uniform sampler2D sampler;";
+    }
+
+    if (needs.hasTextureCoords()) {
+        fs << "varying highp vec2 outTexCoords;";
+    }
+
+    if (needs.hasRoundedCorners()) {
+        // Rounded corners implementation using a signed distance function.
+        fs << R"__SHADER__(
+            uniform float cornerRadius;
+            uniform vec2 cropCenter;
+            varying vec2 outCropCoords;
+
+            /**
+             * This function takes the current crop coordinates and calculates an alpha value based
+             * on the corner radius and distance from the crop center.
+             */
+            float applyCornerRadius(vec2 cropCoords)
+            {
+                vec2 position = cropCoords - cropCenter;
+                // Scale down the dist vector here, as otherwise large corner
+                // radii can cause floating point issues when computing the norm
+                vec2 dist = (abs(position) - cropCenter + vec2(cornerRadius)) / 16.0;
+                // Once we've found the norm, then scale back up.
+                float plane = length(max(dist, vec2(0.0))) * 16.0;
+                return 1.0 - clamp(plane - cornerRadius, 0.0, 1.0);
+            }
+            )__SHADER__";
+    }
+
+    if (needs.drawShadows()) {
+        fs << R"__SHADER__(
+            varying lowp vec4 outShadowColor;
+            varying lowp vec3 outShadowParams;
+
+            /**
+             * Returns the shadow color.
+             */
+            vec4 getShadowColor()
+            {
+                lowp float d = length(outShadowParams.xy);
+                vec2 uv = vec2(outShadowParams.z * (1.0 - d), 0.5);
+                lowp float factor = texture2D(sampler, uv).a;
+                return outShadowColor * factor;
+            }
+            )__SHADER__";
     }
 
     if (needs.getTextureTarget() == Key::TEXTURE_OFF || needs.hasAlpha()) {
@@ -559,10 +664,12 @@ String8 ProgramCache::generateFragmentShader(const Key& needs) {
             )__SHADER__";
     }
 
-    if (needs.hasTransformMatrix() || (needs.getInputTF() != needs.getOutputTF())) {
-        // Currently, display maximum luminance is needed when doing tone mapping.
+    if (needs.hasTransformMatrix() || (needs.getInputTF() != needs.getOutputTF()) ||
+        needs.hasDisplayColorMatrix()) {
         if (needs.needsToneMapping()) {
             fs << "uniform float displayMaxLuminance;";
+            fs << "uniform float maxMasteringLuminance;";
+            fs << "uniform float maxContentLuminance;";
         }
 
         if (needs.hasInputTransformMatrix()) {
@@ -597,45 +704,83 @@ String8 ProgramCache::generateFragmentShader(const Key& needs) {
             )__SHADER__";
         }
 
+        if (needs.hasDisplayColorMatrix()) {
+            fs << "uniform mat4 displayColorMatrix;";
+            fs << R"__SHADER__(
+                highp vec3 DisplayColorMatrix(const highp vec3 color) {
+                    return clamp(vec3(displayColorMatrix * vec4(color, 1.0)), 0.0, 1.0);
+                }
+            )__SHADER__";
+        } else {
+            fs << R"__SHADER__(
+                highp vec3 DisplayColorMatrix(const highp vec3 color) {
+                    return color;
+                }
+            )__SHADER__";
+        }
+
         generateEOTF(fs, needs);
         generateOOTF(fs, needs);
         generateOETF(fs, needs);
     }
 
     fs << "void main(void) {" << indent;
-    if (needs.isTexturing()) {
-        fs << "gl_FragColor = texture2D(sampler, outTexCoords);";
-        if (needs.isY410BT2020()) {
-            fs << "gl_FragColor.rgb = convertY410BT2020(gl_FragColor.rgb);";
-        }
+    if (needs.drawShadows()) {
+        fs << "gl_FragColor = getShadowColor();";
     } else {
-        fs << "gl_FragColor.rgb = color.rgb;";
-        fs << "gl_FragColor.a = 1.0;";
-    }
-    if (needs.isOpaque()) {
-        fs << "gl_FragColor.a = 1.0;";
-    }
-    if (needs.hasAlpha()) {
-        // modulate the current alpha value with alpha set
-        if (needs.isPremultiplied()) {
-            // ... and the color too if we're premultiplied
-            fs << "gl_FragColor *= color.a;";
+        if (needs.isTexturing()) {
+            fs << "gl_FragColor = texture2D(sampler, outTexCoords);";
+            if (needs.isY410BT2020()) {
+                fs << "gl_FragColor.rgb = convertY410BT2020(gl_FragColor.rgb);";
+            }
         } else {
-            fs << "gl_FragColor.a *= color.a;";
+            fs << "gl_FragColor.rgb = color.rgb;";
+            fs << "gl_FragColor.a = 1.0;";
+        }
+        if (needs.isOpaque()) {
+            fs << "gl_FragColor.a = 1.0;";
         }
     }
 
-    if (needs.hasTransformMatrix() || (needs.getInputTF() != needs.getOutputTF())) {
+    if (needs.hasTransformMatrix() || (needs.getInputTF() != needs.getOutputTF()) ||
+        needs.hasDisplayColorMatrix()) {
         if (!needs.isOpaque() && needs.isPremultiplied()) {
             // un-premultiply if needed before linearization
             // avoid divide by 0 by adding 0.5/256 to the alpha channel
             fs << "gl_FragColor.rgb = gl_FragColor.rgb / (gl_FragColor.a + 0.0019);";
         }
         fs << "gl_FragColor.rgb = "
-              "OETF(OutputTransform(OOTF(InputTransform(EOTF(gl_FragColor.rgb)))));";
+              "DisplayColorMatrix(OETF(OutputTransform(OOTF(InputTransform(EOTF(gl_FragColor.rgb)))"
+              ")));";
+
         if (!needs.isOpaque() && needs.isPremultiplied()) {
             // and re-premultiply if needed after gamma correction
             fs << "gl_FragColor.rgb = gl_FragColor.rgb * (gl_FragColor.a + 0.0019);";
+        }
+    }
+
+    /*
+     * Whether applying layer alpha before or after color transform doesn't matter,
+     * as long as we can undo premultiplication. But we cannot un-premultiply
+     * for color transform if the layer alpha = 0, e.g. 0 / (0 + 0.0019) = 0.
+     */
+    if (!needs.drawShadows()) {
+        if (needs.hasAlpha()) {
+            // modulate the current alpha value with alpha set
+            if (needs.isPremultiplied()) {
+                // ... and the color too if we're premultiplied
+                fs << "gl_FragColor *= color.a;";
+            } else {
+                fs << "gl_FragColor.a *= color.a;";
+            }
+        }
+    }
+
+    if (needs.hasRoundedCorners()) {
+        if (needs.isPremultiplied()) {
+            fs << "gl_FragColor *= vec4(applyCornerRadius(outCropCoords));";
+        } else {
+            fs << "gl_FragColor.a *= applyCornerRadius(outCropCoords);";
         }
     }
 
@@ -655,20 +800,21 @@ std::unique_ptr<Program> ProgramCache::generateProgram(const Key& needs) {
     return std::make_unique<Program>(needs, vs.string(), fs.string());
 }
 
-void ProgramCache::useProgram(const Description& description) {
+void ProgramCache::useProgram(EGLContext context, const Description& description) {
     // generate the key for the shader based on the description
     Key needs(computeKey(description));
 
     // look-up the program in the cache
-    auto it = mCache.find(needs);
-    if (it == mCache.end()) {
+    auto& cache = mCaches[context];
+    auto it = cache.find(needs);
+    if (it == cache.end()) {
         // we didn't find our program, so generate one...
         nsecs_t time = systemTime();
-        it = mCache.emplace(needs, generateProgram(needs)).first;
+        it = cache.emplace(needs, generateProgram(needs)).first;
         time = systemTime() - time;
 
-        ALOGV(">>> generated new program: needs=%08X, time=%u ms (%zu programs)", needs.mKey,
-              uint32_t(ns2ms(time)), mCache.size());
+        ALOGV(">>> generated new program for context %p: needs=%08X, time=%u ms (%zu programs)",
+              context, needs.mKey, uint32_t(ns2ms(time)), cache.size());
     }
 
     // here we have a suitable program for this description

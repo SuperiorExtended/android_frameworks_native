@@ -36,10 +36,25 @@ namespace gl {
 class Program {
 public:
     // known locations for position and texture coordinates
-    enum { position = 0, texCoords = 1 };
+    enum {
+        /* position of each vertex for vertex shader */
+        position = 0,
+
+        /* UV coordinates for texture mapping */
+        texCoords = 1,
+
+        /* Crop coordinates, in pixels */
+        cropCoords = 2,
+
+        /* Shadow color */
+        shadowColor = 3,
+
+        /* Shadow params */
+        shadowParams = 4,
+    };
 
     Program(const ProgramCache::Key& needs, const char* vertex, const char* fragment);
-    ~Program() = default;
+    ~Program();
 
     /* whether this object is usable */
     bool isValid() const;
@@ -81,10 +96,21 @@ private:
 
     /* location of display luminance uniform */
     GLint mDisplayMaxLuminanceLoc;
+    /* location of max mastering luminance uniform */
+    GLint mMaxMasteringLuminanceLoc;
+    /* location of max content luminance uniform */
+    GLint mMaxContentLuminanceLoc;
 
     /* location of transform matrix */
     GLint mInputTransformMatrixLoc;
     GLint mOutputTransformMatrixLoc;
+    GLint mDisplayColorMatrixLoc;
+
+    /* location of corner radius uniform */
+    GLint mCornerRadiusLoc;
+
+    /* location of surface crop origin uniform, for rounded corner clipping */
+    GLint mCropCenterLoc;
 };
 
 } // namespace gl

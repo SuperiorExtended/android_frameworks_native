@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef _LIBINPUT_VIRTUAL_KEY_MAP_H
-#define _LIBINPUT_VIRTUAL_KEY_MAP_H
+#pragma once
 
 #include <stdint.h>
 
@@ -24,6 +23,7 @@
 #include <utils/KeyedVector.h>
 #include <utils/Tokenizer.h>
 #include <utils/Unicode.h>
+#include <vector>
 
 namespace android {
 
@@ -49,9 +49,9 @@ class VirtualKeyMap {
 public:
     ~VirtualKeyMap();
 
-    static status_t load(const std::string& filename, VirtualKeyMap** outMap);
+    static std::unique_ptr<VirtualKeyMap> load(const std::string& filename);
 
-    inline const Vector<VirtualKeyDefinition>& getVirtualKeys() const {
+    inline const std::vector<VirtualKeyDefinition>& getVirtualKeys() const {
         return mVirtualKeys;
     }
 
@@ -70,11 +70,9 @@ private:
         bool parseNextIntField(int32_t* outValue);
     };
 
-    Vector<VirtualKeyDefinition> mVirtualKeys;
+    std::vector<VirtualKeyDefinition> mVirtualKeys;
 
     VirtualKeyMap();
 };
 
 } // namespace android
-
-#endif // _LIBINPUT_KEY_CHARACTER_MAP_H

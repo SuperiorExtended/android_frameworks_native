@@ -12,17 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Headers module is in frameworks/native/vulkan/Android.bp.
+// Headers module is in external/vulkan-headers/Android.bp.
+package {
+    // See: http://go/android-license-faq
+    // A large-scale-change added 'default_applicable_licenses' to import
+    // all of the 'license_kinds' from "frameworks_native_license"
+    // to get the below license kinds:
+    //   SPDX-license-identifier-Apache-2.0
+    default_applicable_licenses: ["frameworks_native_license"],
+}
+
 ndk_library {
     name: "libvulkan",
     symbol_file: "libvulkan.map.txt",
     first_version: "24",
     unversioned_until: "current",
+    export_header_libs: [
+        "ndk_vulkan_headers",
+    ],
 }
 
 cc_library_shared {
     name: "libvulkan",
-    clang: true,
+    llndk: {
+        symbol_file: "libvulkan.map.txt",
+        export_llndk_headers: [
+            "vulkan_headers",
+        ],
+    },
     sanitize: {
         misc_undefined: ["integer"],
     },
@@ -33,11 +50,16 @@ cc_library_shared {
         "-DVK_NO_PROTOTYPES",
         "-fvisibility=hidden",
         "-fstrict-aliasing",
-        "-Weverything",
+        "-Wextra",
         "-Werror",
         "-Wno-padded",
+        "-Wno-sign-compare",
         "-Wno-switch-enum",
-        "-Wno-undef",
+        "-Wno-unused-variable",
+        "-Wno-unused-function",
+
+        // Have clang emit complete debug_info.
+        "-fstandalone-debug",
 
         //"-DLOG_NDEBUG=0",
     ],
@@ -62,10 +84,13 @@ cc_library_shared {
         "swapchain.cpp",
     ],
 
-    export_header_lib_headers: ["vulkan_headers"],
     header_libs: [
+        "hwvulkan_headers",
+        "libnativeloader-headers",
         "vulkan_headers",
+        "libsurfaceflinger_headers",
     ],
+    export_header_lib_headers: ["vulkan_headers"],
     shared_libs: [
         "android.hardware.configstore@1.0",
         "android.hardware.configstore-utils",
@@ -74,17 +99,18 @@ cc_library_shared {
         "libsync",
         "libbase",
         "libhidlbase",
-        "libhidltransport",
         "liblog",
         "libui",
         "libgraphicsenv",
         "libutils",
         "libcutils",
         "libz",
-        "libnativebridge",
-        "libnativeloader",
+        "libnativebridge_lazy",
+        "libnativeloader_lazy",
         "libnativewindow",
+        "libvndksupport",
         "android.hardware.graphics.common@1.0",
+        "libSurfaceFlingerProp",
     ],
     static_libs: ["libgrallocusage"],
 }

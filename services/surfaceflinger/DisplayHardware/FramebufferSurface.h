@@ -17,14 +17,16 @@
 #ifndef ANDROID_SF_FRAMEBUFFER_SURFACE_H
 #define ANDROID_SF_FRAMEBUFFER_SURFACE_H
 
-#include "DisplayIdentification.h"
-#include "DisplaySurface.h"
-#include "HWComposerBufferCache.h"
-
 #include <stdint.h>
 #include <sys/types.h>
 
+#include <compositionengine/DisplaySurface.h>
+#include <gui/BufferQueue.h>
 #include <gui/ConsumerBase.h>
+#include <ui/DisplayId.h>
+#include <ui/Size.h>
+
+#include <ui/DisplayIdentification.h>
 
 // ---------------------------------------------------------------------------
 namespace android {
@@ -36,11 +38,11 @@ class HWComposer;
 
 // ---------------------------------------------------------------------------
 
-class FramebufferSurface : public ConsumerBase,
-                           public DisplaySurface {
+class FramebufferSurface : public ConsumerBase, public compositionengine::DisplaySurface {
 public:
-    FramebufferSurface(HWComposer& hwc, DisplayId displayId,
-                       const sp<IGraphicBufferConsumer>& consumer);
+    FramebufferSurface(HWComposer& hwc, PhysicalDisplayId displayId,
+                       const sp<IGraphicBufferConsumer>& consumer, const ui::Size& size,
+                       const ui::Size& maxSize);
 
     virtual status_t beginFrame(bool mustRecompose);
     virtual status_t prepareFrame(CompositionType compositionType);
@@ -48,24 +50,30 @@ public:
     virtual void onFrameCommitted();
     virtual void dumpAsString(String8& result) const;
 
-    virtual void resizeBuffers(const uint32_t width, const uint32_t height);
+    virtual void resizeBuffers(const ui::Size&) override;
 
     virtual const sp<Fence>& getClientTargetAcquireFence() const override;
 
 private:
+    friend class FramebufferSurfaceTest;
+
+    // Limits the width and height by the maximum width specified.
+    ui::Size limitSize(const ui::Size&);
+
+    // Used for testing purposes.
+    static ui::Size limitSizeInternal(const ui::Size&, const ui::Size& maxSize);
+
     virtual ~FramebufferSurface() { }; // this class cannot be overloaded
 
     virtual void freeBufferLocked(int slotIndex);
 
     virtual void dumpLocked(String8& result, const char* prefix) const;
 
-    // nextBuffer waits for and then latches the next buffer from the
-    // BufferQueue and releases the previously latched buffer to the
-    // BufferQueue.  The new buffer is returned in the 'buffer' argument.
-    status_t nextBuffer(uint32_t& outSlot, sp<GraphicBuffer>& outBuffer,
-            sp<Fence>& outFence, ui::Dataspace& outDataspace);
+    const PhysicalDisplayId mDisplayId;
 
-    const DisplayId mDisplayId;
+    // Framebuffer size has a dimension limitation in pixels based on the graphics capabilities of
+    // the device.
+    const ui::Size mMaxSize;
 
     // mCurrentBufferIndex is the slot index of the current buffer or
     // INVALID_BUFFER_SLOT to indicate that either there is no current buffer
@@ -77,7 +85,7 @@ private:
     // compositing. Otherwise it will display the dataspace of the buffer
     // use for compositing which can change as wide-color content is
     // on/off.
-    ui::Dataspace mDataSpace;
+    ui::Dataspace mDataspace;
 
     // mCurrentBuffer is the current buffer or nullptr to indicate that there is
     // no current buffer.
@@ -89,7 +97,9 @@ private:
     // Hardware composer, owned by SurfaceFlinger.
     HWComposer& mHwc;
 
-    HWComposerBufferCache mHwcBufferCache;
+    // Buffers that HWC has seen before, indexed by slot number.
+    // NOTE: The BufferQueue slot number is the same as the HWC slot number.
+    uint64_t mHwcBufferIds[BufferQueue::NUM_BUFFER_SLOTS];
 
     // Previous buffer to release after getting an updated retire fence
     bool mHasPendingRelease;

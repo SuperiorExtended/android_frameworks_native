@@ -14,133 +14,143 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_MESSAGE_QUEUE_H
-#define ANDROID_MESSAGE_QUEUE_H
+#pragma once
 
-#include <errno.h>
-#include <stdint.h>
-#include <sys/types.h>
+#include <cstdint>
+#include <future>
+#include <type_traits>
+#include <utility>
 
-#include <utils/Looper.h>
-#include <utils/Timers.h>
-#include <utils/threads.h>
-
-#include <gui/IDisplayEventConnection.h>
+#include <android-base/thread_annotations.h>
+#include <android/gui/IDisplayEventConnection.h>
 #include <private/gui/BitTube.h>
+#include <utils/Looper.h>
+#include <utils/StrongPointer.h>
+#include <utils/Timers.h>
 
-#include "Barrier.h"
+#include <scheduler/Time.h>
+#include <scheduler/VsyncId.h>
 
-#include <functional>
+#include "EventThread.h"
+#include "TracedOrdinal.h"
+#include "VSyncDispatch.h"
 
 namespace android {
 
-class EventThread;
-class SurfaceFlinger;
+struct ICompositor;
 
-// ---------------------------------------------------------------------------
+template <typename F>
+class Task : public MessageHandler {
+    template <typename G>
+    friend auto makeTask(G&&);
 
-class MessageBase : public MessageHandler {
-public:
-    MessageBase();
+    template <typename... Args>
+    friend sp<Task<F>> sp<Task<F>>::make(Args&&... args);
 
-    // return true if message has a handler
-    virtual bool handler() = 0;
+    explicit Task(F&& f) : mTask(std::move(f)) {}
 
-    // waits for the handler to be processed
-    void wait() const { barrier.wait(); }
+    void handleMessage(const Message&) override { mTask(); }
 
-protected:
-    virtual ~MessageBase();
-
-private:
-    virtual void handleMessage(const Message& message);
-
-    mutable Barrier barrier;
+    using T = std::invoke_result_t<F>;
+    std::packaged_task<T()> mTask;
 };
 
-class LambdaMessage : public MessageBase {
-public:
-    explicit LambdaMessage(std::function<void()> handler)
-          : MessageBase(), mHandler(std::move(handler)) {}
-
-    bool handler() override {
-        mHandler();
-        // This return value is no longer checked, so it's always safe to return true
-        return true;
-    }
-
-private:
-    const std::function<void()> mHandler;
-};
-
-// ---------------------------------------------------------------------------
+template <typename F>
+inline auto makeTask(F&& f) {
+    sp<Task<F>> task = sp<Task<F>>::make(std::forward<F>(f));
+    return std::make_pair(task, task->mTask.get_future());
+}
 
 class MessageQueue {
 public:
-    enum {
-        INVALIDATE = 0,
-        REFRESH = 1,
-    };
+    virtual ~MessageQueue() = default;
 
-    virtual ~MessageQueue();
-
-    virtual void init(const sp<SurfaceFlinger>& flinger) = 0;
-    // TODO(akrulec): Remove this function once everything is migrated to Scheduler.
-    virtual void setEventThread(EventThread* events) = 0;
-    virtual void setEventConnection(const sp<BnDisplayEventConnection>& connection) = 0;
+    virtual void initVsync(std::shared_ptr<scheduler::VSyncDispatch>, frametimeline::TokenManager&,
+                           std::chrono::nanoseconds workDuration) = 0;
+    virtual void destroyVsync() = 0;
+    virtual void setDuration(std::chrono::nanoseconds workDuration) = 0;
     virtual void waitMessage() = 0;
-    virtual status_t postMessage(const sp<MessageBase>& message, nsecs_t reltime = 0) = 0;
-    virtual void invalidate() = 0;
-    virtual void refresh() = 0;
-};
+    virtual void postMessage(sp<MessageHandler>&&) = 0;
+    virtual void postMessageDelayed(sp<MessageHandler>&&, nsecs_t uptimeDelay) = 0;
+    virtual void scheduleConfigure() = 0;
+    virtual void scheduleFrame() = 0;
 
-// ---------------------------------------------------------------------------
+    using Clock = std::chrono::steady_clock;
+    virtual std::optional<Clock::time_point> getScheduledFrameTime() const = 0;
+};
 
 namespace impl {
 
-class MessageQueue final : public android::MessageQueue {
+class MessageQueue : public android::MessageQueue {
+protected:
     class Handler : public MessageHandler {
-        enum { eventMaskInvalidate = 0x1, eventMaskRefresh = 0x2, eventMaskTransaction = 0x4 };
         MessageQueue& mQueue;
-        int32_t mEventMask;
+        std::atomic_bool mFramePending = false;
+
+        std::atomic<VsyncId> mVsyncId;
+        std::atomic<TimePoint> mExpectedVsyncTime;
 
     public:
-        explicit Handler(MessageQueue& queue) : mQueue(queue), mEventMask(0) {}
-        virtual void handleMessage(const Message& message);
-        void dispatchRefresh();
-        void dispatchInvalidate();
+        explicit Handler(MessageQueue& queue) : mQueue(queue) {}
+        void handleMessage(const Message& message) override;
+
+        bool isFramePending() const;
+
+        virtual void dispatchFrame(VsyncId, TimePoint expectedVsyncTime);
     };
 
     friend class Handler;
 
-    sp<SurfaceFlinger> mFlinger;
-    sp<Looper> mLooper;
-    android::EventThread* mEventThread;
-    sp<IDisplayEventConnection> mEvents;
-    gui::BitTube mEventTube;
-    sp<Handler> mHandler;
+    // For tests.
+    MessageQueue(ICompositor&, sp<Handler>);
 
-    static int cb_eventReceiver(int fd, int events, void* data);
-    int eventReceiver(int fd, int events);
+    void vsyncCallback(nsecs_t vsyncTime, nsecs_t targetWakeupTime, nsecs_t readyTime);
+
+    void onNewVsyncSchedule(std::shared_ptr<scheduler::VSyncDispatch>) EXCLUDES(mVsync.mutex);
+
+private:
+    virtual void onFrameSignal(ICompositor&, VsyncId, TimePoint expectedVsyncTime) = 0;
+
+    ICompositor& mCompositor;
+    const sp<Looper> mLooper;
+    const sp<Handler> mHandler;
+
+    struct Vsync {
+        frametimeline::TokenManager* tokenManager = nullptr;
+
+        mutable std::mutex mutex;
+        std::unique_ptr<scheduler::VSyncCallbackRegistration> registration GUARDED_BY(mutex);
+        TracedOrdinal<std::chrono::nanoseconds> workDuration
+                GUARDED_BY(mutex) = {"VsyncWorkDuration-sf", std::chrono::nanoseconds(0)};
+        TimePoint lastCallbackTime GUARDED_BY(mutex);
+        std::optional<nsecs_t> scheduledFrameTime GUARDED_BY(mutex);
+        TracedOrdinal<int> value = {"VSYNC-sf", 0};
+    };
+
+    Vsync mVsync;
+
+    // Returns the old registration so it can be destructed outside the lock to
+    // avoid deadlock.
+    std::unique_ptr<scheduler::VSyncCallbackRegistration> onNewVsyncScheduleLocked(
+            std::shared_ptr<scheduler::VSyncDispatch>) REQUIRES(mVsync.mutex);
 
 public:
-    ~MessageQueue() override = default;
-    void init(const sp<SurfaceFlinger>& flinger) override;
-    void setEventThread(android::EventThread* events) override;
-    void setEventConnection(const sp<BnDisplayEventConnection>& connection) override;
+    explicit MessageQueue(ICompositor&);
+
+    void initVsync(std::shared_ptr<scheduler::VSyncDispatch>, frametimeline::TokenManager&,
+                   std::chrono::nanoseconds workDuration) override;
+    void destroyVsync() override;
+    void setDuration(std::chrono::nanoseconds workDuration) override;
 
     void waitMessage() override;
-    status_t postMessage(const sp<MessageBase>& message, nsecs_t reltime = 0) override;
+    void postMessage(sp<MessageHandler>&&) override;
+    void postMessageDelayed(sp<MessageHandler>&&, nsecs_t uptimeDelay) override;
 
-    // sends INVALIDATE message at next VSYNC
-    void invalidate() override;
-    // sends REFRESH message at next VSYNC
-    void refresh() override;
+    void scheduleConfigure() override;
+    void scheduleFrame() override;
+
+    std::optional<Clock::time_point> getScheduledFrameTime() const override;
 };
-
-// ---------------------------------------------------------------------------
 
 } // namespace impl
 } // namespace android
-
-#endif /* ANDROID_MESSAGE_QUEUE_H */

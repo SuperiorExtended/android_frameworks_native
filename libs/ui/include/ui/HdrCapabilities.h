@@ -22,12 +22,10 @@
 #include <vector>
 
 #include <ui/GraphicTypes.h>
-#include <utils/Flattenable.h>
 
 namespace android {
 
-class HdrCapabilities : public LightFlattenable<HdrCapabilities>
-{
+class HdrCapabilities {
 public:
     HdrCapabilities(const std::vector<ui::Hdr>& types,
             float maxLuminance, float maxAverageLuminance, float minLuminance)
@@ -36,17 +34,11 @@ public:
         mMaxAverageLuminance(maxAverageLuminance),
         mMinLuminance(minLuminance) {}
 
-    // Make this move-constructable and move-assignable
-    HdrCapabilities(HdrCapabilities&& other) noexcept;
-    HdrCapabilities& operator=(HdrCapabilities&& other) noexcept;
-
     HdrCapabilities()
       : mSupportedHdrTypes(),
         mMaxLuminance(-1.0f),
         mMaxAverageLuminance(-1.0f),
         mMinLuminance(-1.0f) {}
-
-    ~HdrCapabilities();
 
     const std::vector<ui::Hdr>& getSupportedHdrTypes() const {
         return mSupportedHdrTypes;
@@ -54,12 +46,6 @@ public:
     float getDesiredMaxLuminance() const { return mMaxLuminance; }
     float getDesiredMaxAverageLuminance() const { return mMaxAverageLuminance; }
     float getDesiredMinLuminance() const { return mMinLuminance; }
-
-    // Flattenable protocol
-    bool isFixedSize() const { return false; }
-    size_t getFlattenedSize() const;
-    status_t flatten(void* buffer, size_t size) const;
-    status_t unflatten(void const* buffer, size_t size);
 
 private:
     std::vector<ui::Hdr> mSupportedHdrTypes;

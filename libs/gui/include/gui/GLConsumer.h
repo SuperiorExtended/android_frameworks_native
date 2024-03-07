@@ -138,6 +138,10 @@ public:
             const sp<GraphicBuffer>& buf, const Rect& cropRect,
             uint32_t transform, bool filtering);
 
+    static void computeTransformMatrix(float outTransform[16], float bufferWidth,
+                                       float bufferHeight, PixelFormat pixelFormat,
+                                       const Rect& cropRect, uint32_t transform, bool filtering);
+
     // Scale the crop down horizontally or vertically such that it has the
     // same aspect ratio as the buffer does.
     static Rect scaleDownCrop(const Rect& crop, uint32_t bufferWidth,
@@ -301,7 +305,7 @@ private:
     // also only creating new EGLImages from buffers when required.
     class EglImage : public LightRefBase<EglImage>  {
     public:
-        EglImage(sp<GraphicBuffer> graphicBuffer);
+        explicit EglImage(sp<GraphicBuffer> graphicBuffer);
 
         // createIfNeeded creates an EGLImage if required (we haven't created
         // one yet, or the EGLDisplay or crop-rect has changed).
@@ -499,7 +503,7 @@ private:
     // protects static initialization
     static Mutex sStaticInitLock;
 
-    // mReleasedTexImageBuffer is a dummy buffer used when in single buffer
+    // mReleasedTexImageBuffer is a buffer placeholder used when in single buffer
     // mode and releaseTexImage() has been called
     static sp<GraphicBuffer> sReleasedTexImageBuffer;
     sp<EglImage> mReleasedTexImage;

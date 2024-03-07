@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#pragma once
+
 #include <condition_variable>
 #include <chrono>
 #include <functional>
@@ -29,7 +31,7 @@ static constexpr std::chrono::milliseconds IPC_CALL_WAIT{500};
 
 class BackgroundTaskState {
 public:
-    BackgroundTaskState(std::function<void(void)> &&func)
+    explicit BackgroundTaskState(std::function<void(void)> &&func)
             : mFunc(std::forward<decltype(func)>(func)) {}
     void notify() {
         std::unique_lock<std::mutex> lock(mMutex);

@@ -76,10 +76,11 @@ class CommandOptions {
   private:
     class CommandOptionsValues {
       private:
-        CommandOptionsValues(int64_t timeout_ms);
+        explicit CommandOptionsValues(int64_t timeout_ms);
 
         int64_t timeout_ms_;
         bool always_;
+        bool close_all_fds_on_exec_;
         PrivilegeMode account_mode_;
         OutputMode output_mode_;
         std::string logging_message_;
@@ -88,7 +89,7 @@ class CommandOptions {
         friend class CommandOptionsBuilder;
     };
 
-    CommandOptions(const CommandOptionsValues& values);
+    explicit CommandOptions(const CommandOptionsValues& values);
 
     const CommandOptionsValues values;
 
@@ -112,6 +113,13 @@ class CommandOptions {
         CommandOptionsBuilder& DropRoot();
         /* Sets the command's OutputMode as `REDIRECT_TO_STDERR` */
         CommandOptionsBuilder& RedirectStderr();
+        /* Closes all file descriptors before exec-ing the target process. This
+         * includes also stdio pipes, which are dup-ed on /dev/null. It prevents
+         * leaking opened FDs to the target process, which in turn can hit
+         * selinux denials in presence of auto_trans rules.
+         */
+        CommandOptionsBuilder& CloseAllFileDescriptorsOnExec();
+
         /* When not empty, logs a message before executing the command.
          * Must contain a `%s`, which will be replaced by the full command line, and end on `\n`. */
         CommandOptionsBuilder& Log(const std::string& message);
@@ -119,7 +127,7 @@ class CommandOptions {
         CommandOptions Build();
 
       private:
-        CommandOptionsBuilder(int64_t timeout_ms);
+        explicit CommandOptionsBuilder(int64_t timeout_ms);
         CommandOptionsValues values;
         friend class CommandOptions;
     };
@@ -130,6 +138,8 @@ class CommandOptions {
     int64_t TimeoutInMs() const;
     /* Checks whether the command should always be run, even on dry-run mode. */
     bool Always() const;
+    /* Checks whether all FDs should be closed prior to the exec() calls. */
+    bool ShouldCloseAllFileDescriptorsOnExec() const;
     /** Gets the PrivilegeMode of the command. */
     PrivilegeMode PrivilegeMode() const;
     /** Gets the OutputMode of the command. */
@@ -176,10 +186,30 @@ class PropertiesHelper {
      */
     static bool IsUnroot();
 
+    /*
+     * Whether or not the parallel run is enabled. Setting the system property
+     * 'dumpstate.parallel_run' to false to disable it, otherwise it returns
+     * true by default.
+     */
+    static bool IsParallelRun();
+
+    /*
+     * Strict-run mode is determined by the `dumpstate.strict_run` sysprop which
+     * will default to true. This results in shortened timeouts for flaky
+     * sections.
+     */
+#if !defined(__ANDROID_VNDK__)
+    static bool IsStrictRun();
+#endif
+
   private:
     static std::string build_type_;
     static int dry_run_;
     static int unroot_;
+    static int parallel_run_;
+#if !defined(__ANDROID_VNDK__)
+    static int strict_run_;
+#endif
 };
 
 /*
@@ -204,12 +234,6 @@ int RunCommandToFd(int fd, const std::string& title, const std::vector<std::stri
  * |path| location of the file to be dumped.
  */
 int DumpFileToFd(int fd, const std::string& title, const std::string& path);
-
-/*
- * Finds the process id by process name.
- * |ps_name| the process name we want to search for
- */
-int GetPidByName(const std::string& ps_name);
 
 }  // namespace dumpstate
 }  // namespace os

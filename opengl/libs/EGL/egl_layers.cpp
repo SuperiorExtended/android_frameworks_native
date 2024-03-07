@@ -18,9 +18,9 @@
 
 #include <EGL/egl.h>
 #include <android-base/file.h>
+#include <android-base/properties.h>
 #include <android-base/strings.h>
 #include <android/dlext.h>
-#include <cutils/properties.h>
 #include <dlfcn.h>
 #include <graphicsenv/GraphicsEnv.h>
 #include <log/log.h>
@@ -37,9 +37,8 @@ namespace android {
 // 2. If none enabled, check system properties
 //
 // - Layer initializing -
-// TODO: ADD DETAIL ABOUT NEW INTERFACES
-// - InitializeLayer (provided by layer, called by loader)
-// - GetLayerProcAddress (provided by layer, called by loader)
+// - AndroidGLESLayer_Initialize (provided by layer, called by loader)
+// - AndroidGLESLayer_GetProcAddress (provided by layer, called by loader)
 // - getNextLayerProcAddress (provided by loader, called by layer)
 //
 // 1. Walk through defs for egl and each gl version
@@ -73,27 +72,34 @@ std::vector<FunctionTable> layer_functions;
 
 const void* getNextLayerProcAddress(void* layer_id, const char* name) {
     // Use layer_id to find funcs for layer below current
-    // This is the same key provided in InitializeLayer
+    // This is the same key provided in AndroidGLESLayer_Initialize
     auto next_layer_funcs = reinterpret_cast<FunctionTable*>(layer_id);
     EGLFuncPointer val;
+
+    ALOGV("getNextLayerProcAddress servicing %s", name);
 
     if (func_indices.find(name) == func_indices.end()) {
         // No entry for this function - it is an extension
         // call down the GPA chain directly to the impl
-        ALOGV("getNextLayerProcAddress servicing %s", name);
+        ALOGV("getNextLayerProcAddress - name(%s) no func_indices entry found", name);
 
         // Look up which GPA we should use
         int gpaIndex = func_indices["eglGetProcAddress"];
+        ALOGV("getNextLayerProcAddress - name(%s) gpaIndex(%i) <- using GPA from this index", name,
+              gpaIndex);
         EGLFuncPointer gpaNext = (*next_layer_funcs)[gpaIndex];
-
-        ALOGV("Calling down the GPA chain (%llu) for %s", (unsigned long long)gpaNext, name);
+        ALOGV("getNextLayerProcAddress - name(%s) gpaIndex(%i) gpaNext(%llu) <- using GPA at this "
+              "address",
+              name, gpaIndex, (unsigned long long)gpaNext);
 
         // Call it for the requested function
         typedef void* (*PFNEGLGETPROCADDRESSPROC)(const char*);
         PFNEGLGETPROCADDRESSPROC next = reinterpret_cast<PFNEGLGETPROCADDRESSPROC>(gpaNext);
 
         val = reinterpret_cast<EGLFuncPointer>(next(name));
-        ALOGV("Got back %llu for %s", (unsigned long long)val, name);
+        ALOGV("getNextLayerProcAddress - name(%s) gpaIndex(%i) gpaNext(%llu) Got back (%llu) from "
+              "GPA",
+              name, gpaIndex, (unsigned long long)gpaNext, (unsigned long long)val);
 
         // We should store it now, but to do that, we need to move func_idx to the class so we can
         // increment it separately
@@ -101,10 +107,12 @@ const void* getNextLayerProcAddress(void* layer_id, const char* name) {
         return reinterpret_cast<void*>(val);
     }
 
-    // int index = func_indices[name];
-    // val = (*next_layer_funcs)[index];
-    // return reinterpret_cast<void*>(val);
-    return reinterpret_cast<void*>((*next_layer_funcs)[func_indices[name]]);
+    int index = func_indices[name];
+    val = (*next_layer_funcs)[index];
+    ALOGV("getNextLayerProcAddress - name(%s) index(%i) entry(%llu) - Got a hit, returning known "
+          "entry",
+          name, index, (unsigned long long)val);
+    return reinterpret_cast<void*>(val);
 }
 
 void SetupFuncMaps(FunctionTable& functions, char const* const* entries, EGLFuncPointer* curr,
@@ -115,14 +123,26 @@ void SetupFuncMaps(FunctionTable& functions, char const* const* entries, EGLFunc
         // Some names overlap, only fill with initial entry
         // This does mean that some indices will not be used
         if (func_indices.find(name) == func_indices.end()) {
+            ALOGV("SetupFuncMaps - name(%s), func_idx(%i), No entry for func_indices, assigning "
+                  "now",
+                  name, func_idx);
             func_names[func_idx] = name;
             func_indices[name] = func_idx;
+        } else {
+            ALOGV("SetupFuncMaps - name(%s), func_idx(%i), Found entry for func_indices", name,
+                  func_idx);
         }
 
         // Populate layer_functions once with initial value
         // These values will arrive in priority order, starting with platform entries
         if (functions[func_idx] == nullptr) {
+            ALOGV("SetupFuncMaps - name(%s), func_idx(%i), No entry for functions, assigning "
+                  "(%llu)",
+                  name, func_idx, (unsigned long long)*curr);
             functions[func_idx] = *curr;
+        } else {
+            ALOGV("SetupFuncMaps - name(%s), func_idx(%i), Found entry for functions (%llu)", name,
+                  func_idx, (unsigned long long)functions[func_idx]);
         }
 
         entries++;
@@ -143,15 +163,13 @@ LayerLoader& LayerLoader::getInstance() {
 const char kSystemLayerLibraryDir[] = "/data/local/debug/gles";
 
 std::string LayerLoader::GetDebugLayers() {
-    // Layers can be specified at the Java level in GraphicsEnvironemnt
+    // Layers can be specified at the Java level in GraphicsEnvironment
     // gpu_debug_layers_gles = layer1:layer2:layerN
     std::string debug_layers = android::GraphicsEnv::getInstance().getDebugLayersGLES();
 
     if (debug_layers.empty()) {
         // Only check system properties if Java settings are empty
-        char prop[PROPERTY_VALUE_MAX];
-        property_get("debug.gles.layers", prop, "");
-        debug_layers = prop;
+        debug_layers = base::GetProperty("debug.gles.layers", "");
     }
 
     return debug_layers;
@@ -329,7 +347,7 @@ void LayerLoader::LoadLayers() {
 
     // Only enable the system search path for non-user builds
     std::string system_path;
-    if (property_get_bool("ro.debuggable", false) && prctl(PR_GET_DUMPABLE, 0, 0, 0, 0)) {
+    if (android::GraphicsEnv::getInstance().isDebuggable()) {
         system_path = kSystemLayerLibraryDir;
     }
 
@@ -371,25 +389,24 @@ void LayerLoader::LoadLayers() {
                 // any symbol dependencies will be resolved by system libraries. They
                 // can't safely use libc++_shared, for example. Which is one reason
                 // (among several) we only allow them in non-user builds.
-                void* handle = nullptr;
                 auto app_namespace = android::GraphicsEnv::getInstance().getAppNamespace();
                 if (app_namespace && !android::base::StartsWith(layer, kSystemLayerLibraryDir)) {
-                    bool native_bridge = false;
-                    std::string error_message;
-                    handle = OpenNativeLibrary(app_namespace, layer.c_str(), &native_bridge,
-                                               &error_message);
-                    if (!handle) {
+                    char* error_message = nullptr;
+                    dlhandle_ = OpenNativeLibraryInNamespace(app_namespace, layer.c_str(),
+                                                             &native_bridge_, &error_message);
+                    if (!dlhandle_) {
                         ALOGE("Failed to load layer %s with error: %s", layer.c_str(),
-                              error_message.c_str());
+                              error_message);
+                        android::NativeLoaderFreeErrorMessage(error_message);
                         return;
                     }
 
                 } else {
-                    handle = dlopen(layer.c_str(), RTLD_NOW | RTLD_LOCAL);
+                    dlhandle_ = dlopen(layer.c_str(), RTLD_NOW | RTLD_LOCAL);
                 }
 
-                if (handle) {
-                    ALOGV("Loaded layer handle (%llu) for layer %s", (unsigned long long)handle,
+                if (dlhandle_) {
+                    ALOGV("Loaded layer handle (%llu) for layer %s", (unsigned long long)dlhandle_,
                           layers[i].c_str());
                 } else {
                     // If the layer is found but can't be loaded, try setenforce 0
@@ -399,11 +416,10 @@ void LayerLoader::LoadLayers() {
                 }
 
                 // Find the layer's Initialize function
-                std::string init_func = "InitializeLayer";
+                std::string init_func = "AndroidGLESLayer_Initialize";
                 ALOGV("Looking for entrypoint %s", init_func.c_str());
 
-                layer_init_func LayerInit =
-                        reinterpret_cast<layer_init_func>(dlsym(handle, init_func.c_str()));
+                layer_init_func LayerInit = GetTrampoline<layer_init_func>(init_func.c_str());
                 if (LayerInit) {
                     ALOGV("Found %s for layer %s", init_func.c_str(), layer.c_str());
                     layer_init_.push_back(LayerInit);
@@ -413,11 +429,10 @@ void LayerLoader::LoadLayers() {
                 }
 
                 // Find the layer's setup function
-                std::string setup_func = "GetLayerProcAddress";
+                std::string setup_func = "AndroidGLESLayer_GetProcAddress";
                 ALOGV("Looking for entrypoint %s", setup_func.c_str());
 
-                layer_setup_func LayerSetup =
-                        reinterpret_cast<layer_setup_func>(dlsym(handle, setup_func.c_str()));
+                layer_setup_func LayerSetup = GetTrampoline<layer_setup_func>(setup_func.c_str());
                 if (LayerSetup) {
                     ALOGV("Found %s for layer %s", setup_func.c_str(), layer.c_str());
                     layer_setup_.push_back(LayerSetup);

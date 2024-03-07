@@ -16,17 +16,18 @@
 
 #include <gui/LayerDebugInfo.h>
 
+#include <android-base/stringprintf.h>
+
 #include <ui/DebugUtils.h>
 
 #include <binder/Parcel.h>
 
-#include <utils/String8.h>
-
 using namespace android;
+using android::base::StringAppendF;
 
 #define RETURN_ON_ERROR(X) do {status_t res = (X); if (res != NO_ERROR) return res;} while(false)
 
-namespace android {
+namespace android::gui {
 
 status_t LayerDebugInfo::writeToParcel(Parcel* parcel) const {
     RETURN_ON_ERROR(parcel->writeCString(mName.c_str()));
@@ -57,9 +58,9 @@ status_t LayerDebugInfo::writeToParcel(Parcel* parcel) const {
     RETURN_ON_ERROR(parcel->writeInt32(mActiveBufferStride));
     RETURN_ON_ERROR(parcel->writeInt32(mActiveBufferFormat));
     RETURN_ON_ERROR(parcel->writeInt32(mNumQueuedFrames));
-    RETURN_ON_ERROR(parcel->writeBool(mRefreshPending));
     RETURN_ON_ERROR(parcel->writeBool(mIsOpaque));
     RETURN_ON_ERROR(parcel->writeBool(mContentDirty));
+    RETURN_ON_ERROR(parcel->write(mStretchEffect));
     return NO_ERROR;
 }
 
@@ -101,45 +102,51 @@ status_t LayerDebugInfo::readFromParcel(const Parcel* parcel) {
     RETURN_ON_ERROR(parcel->readInt32(&mActiveBufferStride));
     RETURN_ON_ERROR(parcel->readInt32(&mActiveBufferFormat));
     RETURN_ON_ERROR(parcel->readInt32(&mNumQueuedFrames));
-    RETURN_ON_ERROR(parcel->readBool(&mRefreshPending));
     RETURN_ON_ERROR(parcel->readBool(&mIsOpaque));
     RETURN_ON_ERROR(parcel->readBool(&mContentDirty));
+    RETURN_ON_ERROR(parcel->read(mStretchEffect));
     return NO_ERROR;
 }
 
 std::string to_string(const LayerDebugInfo& info) {
-    String8 result;
+    std::string result;
 
-    result.appendFormat("+ %s (%s)\n", info.mType.c_str(), info.mName.c_str());
+    StringAppendF(&result, "+ %s (%s)\n", info.mType.c_str(), info.mName.c_str());
     info.mTransparentRegion.dump(result, "TransparentRegion");
     info.mVisibleRegion.dump(result, "VisibleRegion");
     info.mSurfaceDamageRegion.dump(result, "SurfaceDamageRegion");
+    if (info.mStretchEffect.hasEffect()) {
+        const auto& se = info.mStretchEffect;
+        StringAppendF(&result,
+                      "  StretchEffect width = %f, height = %f vec=(%f, %f) "
+                      "maxAmount=(%f, %f)\n",
+                      se.width, se.height,
+                      se.vectorX, se.vectorY, se.maxAmountX, se.maxAmountY);
+    }
 
-    result.appendFormat("      layerStack=%4d, z=%9d, pos=(%g,%g), size=(%4d,%4d), ",
-            info.mLayerStack, info.mZ, static_cast<double>(info.mX), static_cast<double>(info.mY),
-            info.mWidth, info.mHeight);
+    StringAppendF(&result, "      layerStack=%4d, z=%9d, pos=(%g,%g), size=(%4d,%4d), ",
+                  info.mLayerStack, info.mZ, static_cast<double>(info.mX),
+                  static_cast<double>(info.mY), info.mWidth, info.mHeight);
 
-    result.appendFormat("crop=%s, ", to_string(info.mCrop).c_str());
-    result.appendFormat("isOpaque=%1d, invalidate=%1d, ", info.mIsOpaque, info.mContentDirty);
-    result.appendFormat("dataspace=%s, ", dataspaceDetails(info.mDataSpace).c_str());
-    result.appendFormat("pixelformat=%s, ", decodePixelFormat(info.mPixelFormat).c_str());
-    result.appendFormat("color=(%.3f,%.3f,%.3f,%.3f), flags=0x%08x, ",
-            static_cast<double>(info.mColor.r), static_cast<double>(info.mColor.g),
-            static_cast<double>(info.mColor.b), static_cast<double>(info.mColor.a),
-            info.mFlags);
-    result.appendFormat("tr=[%.2f, %.2f][%.2f, %.2f]",
-            static_cast<double>(info.mMatrix[0][0]), static_cast<double>(info.mMatrix[0][1]),
-            static_cast<double>(info.mMatrix[1][0]), static_cast<double>(info.mMatrix[1][1]));
+    StringAppendF(&result, "crop=%s, ", to_string(info.mCrop).c_str());
+    StringAppendF(&result, "isOpaque=%1d, invalidate=%1d, ", info.mIsOpaque, info.mContentDirty);
+    StringAppendF(&result, "dataspace=%s, ", dataspaceDetails(info.mDataSpace).c_str());
+    StringAppendF(&result, "pixelformat=%s, ", decodePixelFormat(info.mPixelFormat).c_str());
+    StringAppendF(&result, "color=(%.3f,%.3f,%.3f,%.3f), flags=0x%08x, ",
+                  static_cast<double>(info.mColor.r), static_cast<double>(info.mColor.g),
+                  static_cast<double>(info.mColor.b), static_cast<double>(info.mColor.a),
+                  info.mFlags);
+    StringAppendF(&result, "tr=[%.2f, %.2f][%.2f, %.2f]", static_cast<double>(info.mMatrix[0][0]),
+                  static_cast<double>(info.mMatrix[0][1]), static_cast<double>(info.mMatrix[1][0]),
+                  static_cast<double>(info.mMatrix[1][1]));
     result.append("\n");
-    result.appendFormat("      parent=%s\n", info.mParentName.c_str());
-    result.appendFormat("      activeBuffer=[%4ux%4u:%4u,%s],",
-            info.mActiveBufferWidth, info.mActiveBufferHeight,
-            info.mActiveBufferStride,
-            decodePixelFormat(info.mActiveBufferFormat).c_str());
-    result.appendFormat(" queued-frames=%d, mRefreshPending=%d",
-            info.mNumQueuedFrames, info.mRefreshPending);
+    StringAppendF(&result, "      parent=%s\n", info.mParentName.c_str());
+    StringAppendF(&result, "      activeBuffer=[%4ux%4u:%4u,%s],", info.mActiveBufferWidth,
+                  info.mActiveBufferHeight, info.mActiveBufferStride,
+                  decodePixelFormat(info.mActiveBufferFormat).c_str());
+    StringAppendF(&result, " queued-frames=%d", info.mNumQueuedFrames);
     result.append("\n");
-    return std::string(result.c_str());
+    return result;
 }
 
-} // android
+} // namespace android::gui

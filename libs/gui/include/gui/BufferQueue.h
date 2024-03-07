@@ -63,6 +63,9 @@ public:
         void onFrameReplaced(const BufferItem& item) override;
         void onBuffersReleased() override;
         void onSidebandStreamChanged() override;
+        void onFrameDequeued(const uint64_t bufferId) override;
+        void onFrameCancelled(const uint64_t bufferId) override;
+        void onFrameDetached(const uint64_t bufferID) override;
         void addAndGetFrameTimestamps(
                 const NewFrameEventsEntry* newTimestamps,
                 FrameEventHistoryDelta* outDelta) override;
@@ -78,12 +81,6 @@ public:
     static void createBufferQueue(sp<IGraphicBufferProducer>* outProducer,
             sp<IGraphicBufferConsumer>* outConsumer,
             bool consumerIsSurfaceFlinger = false);
-
-#ifndef NO_BUFFERHUB
-    // Creates an IGraphicBufferProducer and IGraphicBufferConsumer pair backed by BufferHub.
-    static void createBufferHubQueue(sp<IGraphicBufferProducer>* outProducer,
-                                     sp<IGraphicBufferConsumer>* outConsumer);
-#endif
 
     BufferQueue() = delete; // Create through createBufferQueue
 };

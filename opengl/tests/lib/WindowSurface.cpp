@@ -16,10 +16,13 @@
 
 #include <WindowSurface.h>
 
-#include <gui/SurfaceComposerClient.h>
+#include <utility>
+
 #include <gui/ISurfaceComposer.h>
 #include <gui/Surface.h>
-#include <ui/DisplayInfo.h>
+#include <gui/SurfaceComposerClient.h>
+#include <ui/DisplayMode.h>
+#include <ui/DisplayState.h>
 
 using namespace android;
 
@@ -33,25 +36,40 @@ WindowSurface::WindowSurface() {
         return;
     }
 
-    // Get main display parameters.
-    sp<IBinder> mainDpy = SurfaceComposerClient::getBuiltInDisplay(
-            ISurfaceComposer::eDisplayIdMain);
-    DisplayInfo mainDpyInfo;
-    err = SurfaceComposerClient::getDisplayInfo(mainDpy, &mainDpyInfo);
-    if (err != NO_ERROR) {
-        fprintf(stderr, "ERROR: unable to get display characteristics\n");
+    const auto ids = SurfaceComposerClient::getPhysicalDisplayIds();
+    if (ids.empty()) {
+        fprintf(stderr, "Failed to get ID for any displays.\n");
         return;
     }
 
-    uint32_t width, height;
-    if (mainDpyInfo.orientation != DISPLAY_ORIENTATION_0 &&
-            mainDpyInfo.orientation != DISPLAY_ORIENTATION_180) {
-        // rotated
-        width = mainDpyInfo.h;
-        height = mainDpyInfo.w;
-    } else {
-        width = mainDpyInfo.w;
-        height = mainDpyInfo.h;
+    // display 0 is picked for now, can extend to support all displays if needed
+    const auto displayToken = SurfaceComposerClient::getPhysicalDisplayToken(ids.front());
+    if (displayToken == nullptr) {
+        fprintf(stderr, "ERROR: no display\n");
+        return;
+    }
+
+    ui::DisplayMode displayMode;
+    err = SurfaceComposerClient::getActiveDisplayMode(displayToken, &displayMode);
+    if (err != NO_ERROR) {
+        fprintf(stderr, "ERROR: unable to get active display mode\n");
+        return;
+    }
+
+    ui::DisplayState displayState;
+    err = SurfaceComposerClient::getDisplayState(displayToken, &displayState);
+    if (err != NO_ERROR) {
+        fprintf(stderr, "ERROR: unable to get display state\n");
+        return;
+    }
+
+    const ui::Size& resolution = displayMode.resolution;
+    auto width = resolution.getWidth();
+    auto height = resolution.getHeight();
+
+    if (displayState.orientation == ui::ROTATION_90 ||
+        displayState.orientation == ui::ROTATION_270) {
+        std::swap(width, height);
     }
 
     sp<SurfaceControl> sc = surfaceComposerClient->createSurface(

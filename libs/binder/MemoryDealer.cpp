@@ -23,7 +23,6 @@
 #include <utils/Log.h>
 #include <utils/SortedVector.h>
 #include <utils/String8.h>
-#include <utils/threads.h>
 
 #include <stdint.h>
 #include <stdio.h>
@@ -228,10 +227,8 @@ Allocation::~Allocation()
 // ----------------------------------------------------------------------------
 
 MemoryDealer::MemoryDealer(size_t size, const char* name, uint32_t flags)
-    : mHeap(new MemoryHeapBase(size, flags, name)),
-    mAllocator(new SimpleBestFitAllocator(size))
-{    
-}
+      : mHeap(sp<MemoryHeapBase>::make(size, flags, name)),
+        mAllocator(new SimpleBestFitAllocator(size)) {}
 
 MemoryDealer::~MemoryDealer()
 {
@@ -243,7 +240,7 @@ sp<IMemory> MemoryDealer::allocate(size_t size)
     sp<IMemory> memory;
     const ssize_t offset = allocator()->allocate(size);
     if (offset >= 0) {
-        memory = new Allocation(this, heap(), offset, size);
+        memory = sp<Allocation>::make(sp<MemoryDealer>::fromExisting(this), heap(), offset, size);
     }
     return memory;
 }
@@ -387,7 +384,7 @@ SimpleBestFitAllocator::chunk_t* SimpleBestFitAllocator::dealloc(size_t start)
     while (cur) {
         if (cur->start == start) {
             LOG_FATAL_IF(cur->free,
-                "block at offset 0x%08lX of size 0x%08lX already freed",
+                "block at offset 0x%08lX of size 0x%08X already freed",
                 cur->start*kMemoryAlign, cur->size*kMemoryAlign);
 
             // merge freed blocks together
@@ -411,7 +408,7 @@ SimpleBestFitAllocator::chunk_t* SimpleBestFitAllocator::dealloc(size_t start)
                 }
             #endif
             LOG_FATAL_IF(!freed->free,
-                "freed block at offset 0x%08lX of size 0x%08lX is not free!",
+                "freed block at offset 0x%08lX of size 0x%08X is not free!",
                 freed->start * kMemoryAlign, freed->size * kMemoryAlign);
 
             return freed;
@@ -481,4 +478,4 @@ void SimpleBestFitAllocator::dump_l(String8& result,
 }
 
 
-}; // namespace android
+} // namespace android

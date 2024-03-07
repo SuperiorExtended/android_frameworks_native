@@ -12,24 +12,53 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+package {
+    // See: http://go/android-license-faq
+    // A large-scale-change added 'default_applicable_licenses' to import
+    // all of the 'license_kinds' from "frameworks_native_license"
+    // to get the below license kinds:
+    //   SPDX-license-identifier-Apache-2.0
+    default_applicable_licenses: ["frameworks_native_license"],
+}
+
 cc_test {
     name: "librenderengine_test",
-    defaults: ["surfaceflinger_defaults"],
+    defaults: [
+        "android.hardware.graphics.composer3-ndk_shared",
+        "librenderengine_deps",
+        "surfaceflinger_defaults",
+    ],
     test_suites: ["device-tests"],
     srcs: [
+        "DisplaySettingsTest.cpp",
+        "LayerSettingsTest.cpp",
         "RenderEngineTest.cpp",
+        "RenderEngineThreadedTest.cpp",
+    ],
+    include_dirs: [
+        "external/skia/src/gpu",
     ],
     static_libs: [
         "libgmock",
         "librenderengine",
+        "librenderengine_mocks",
+        "libshaders",
+        "libtonemap",
     ],
+    header_libs: [
+        "libtonemap_headers",
+    ],
+
     shared_libs: [
+        "libbase",
         "libcutils",
         "libEGL",
         "libGLESv2",
         "libgui",
         "liblog",
         "libnativewindow",
+        "libprocessgroup",
+        "libsync",
         "libui",
         "libutils",
     ],

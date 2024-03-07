@@ -43,7 +43,7 @@ using ::android::sp;
 
 struct SensorManager final : public ISensorManager {
 
-    SensorManager(JavaVM* vm);
+    explicit SensorManager(JavaVM* vm);
     ~SensorManager();
 
     // Methods from ::android::frameworks::sensorservice::V1_0::ISensorManager follow.
@@ -58,8 +58,6 @@ private:
     ::android::SensorManager& getInternalManager();
     sp<Looper> getLooper();
 
-    std::mutex mInternalManagerMutex;
-    ::android::SensorManager* mInternalManager = nullptr; // does not own
     sp<Looper> mLooper;
 
     volatile bool mStopThread;

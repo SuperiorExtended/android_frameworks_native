@@ -1,4 +1,13 @@
-cc_library_static {
+package {
+    // See: http://go/android-license-faq
+    // A large-scale-change added 'default_applicable_licenses' to import
+    // all of the 'license_kinds' from "frameworks_native_license"
+    // to get the below license kinds:
+    //   SPDX-license-identifier-Apache-2.0
+    default_applicable_licenses: ["frameworks_native_license"],
+}
+
+cc_library_shared {
     name: "libvkjson",
     srcs: [
         "vkjson.cc",
@@ -15,17 +24,17 @@ cc_library_static {
     export_include_dirs: [
         ".",
     ],
-    whole_static_libs: [
+    shared_libs: [
         "libjsoncpp",
+        "libvulkan",
     ],
-    header_libs: [
-        "vulkan_headers",
+    export_shared_lib_headers: [
+        "libvulkan",
     ],
 }
 
 cc_library_static {
     name: "libvkjson_ndk",
-    clang: true,
     srcs: [
         "vkjson.cc",
         "vkjson_instance.cc",
@@ -45,7 +54,7 @@ cc_library_static {
         "libjsoncpp_ndk",
     ],
     header_libs: [
-        "vulkan_headers_ndk",
+        "vulkan_headers",
     ],
     sdk_version: "24",
     stl: "libc++_static",

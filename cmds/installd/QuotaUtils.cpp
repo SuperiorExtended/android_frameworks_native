@@ -35,7 +35,7 @@ std::recursive_mutex mMountsLock;
 /* Map of all quota mounts from target to source */
 std::unordered_map<std::string, std::string> mQuotaReverseMounts;
 
-std::string& FindQuotaDeviceForUuid(const std::string& uuid) {
+std::string FindQuotaDeviceForUuid(const std::string& uuid) {
     std::lock_guard<std::recursive_mutex> lock(mMountsLock);
     auto path = create_data_path(uuid.empty() ? nullptr : uuid.c_str());
     return mQuotaReverseMounts[path];
@@ -60,6 +60,10 @@ bool InvalidateQuotaMounts() {
         std::getline(in, source, ' ');
         std::getline(in, target, ' ');
         std::getline(in, ignored);
+
+        if (target.compare(0, 13, "/data_mirror/") == 0) {
+            continue;
+        }
 
         if (source.compare(0, 11, "/dev/block/") == 0) {
             struct dqblk dq;
@@ -92,6 +96,26 @@ int64_t GetOccupiedSpaceForUid(const std::string& uuid, uid_t uid) {
     } else {
 #if MEASURE_DEBUG
         LOG(DEBUG) << "quotactl() for UID " << uid << " " << dq.dqb_curspace;
+#endif
+        return dq.dqb_curspace;
+    }
+}
+
+int64_t GetOccupiedSpaceForProjectId(const std::string& uuid, int projectId) {
+    const std::string device = FindQuotaDeviceForUuid(uuid);
+    if (device == "") {
+        return -1;
+    }
+    struct dqblk dq;
+    if (quotactl(QCMD(Q_GETQUOTA, PRJQUOTA), device.c_str(), projectId,
+            reinterpret_cast<char*>(&dq)) != 0) {
+        if (errno != ESRCH) {
+            PLOG(ERROR) << "Failed to quotactl " << device << " for Project ID " << projectId;
+        }
+        return -1;
+    } else {
+#if MEASURE_DEBUG
+        LOG(DEBUG) << "quotactl() for Project ID " << projectId << " " << dq.dqb_curspace;
 #endif
         return dq.dqb_curspace;
     }

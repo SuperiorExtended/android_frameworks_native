@@ -57,15 +57,15 @@ public:
             uint8_t b[16];
             int64_t i64[2];
         };
-        uuid_t(const uint8_t (&uuid)[16]) { memcpy(b, uuid, sizeof(b));}
+        explicit uuid_t(const uint8_t (&uuid)[16]) { memcpy(b, uuid, sizeof(b));}
         uuid_t() : b{0} {}
     };
 
     Sensor(const Sensor&) = default;
     Sensor& operator=(const Sensor&) = default;
 
-    Sensor(const char * name = "");
-    Sensor(struct sensor_t const* hwSensor, int halVersion = 0);
+    explicit Sensor(const char * name = "");
+    explicit Sensor(struct sensor_t const* hwSensor, int halVersion = 0);
     Sensor(struct sensor_t const& hwSensor, const uuid_t& uuid, int halVersion = 0);
     ~Sensor();
 
@@ -96,13 +96,13 @@ public:
     bool isDirectChannelTypeSupported(int32_t sharedMemType) const;
     int32_t getReportingMode() const;
 
-    // Note that after setId() has been called, getUuid() no longer
-    // returns the UUID.
-    // TODO(b/29547335): Remove getUuid(), add getUuidIndex(), and
-    //     make sure setId() doesn't change the UuidIndex.
     const uuid_t& getUuid() const;
+    void  anonymizeUuid();
     int32_t getId() const;
     void setId(int32_t id);
+
+    void capMinDelayMicros(int32_t cappedMinDelay);
+    void capHighestDirectReportRateLevel(int32_t cappedRateLevel);
 
     // LightFlattenable protocol
     inline bool isFixedSize() const { return false; }
@@ -129,10 +129,8 @@ private:
     int32_t mRequiredAppOp;
     int32_t mMaxDelay;
     uint32_t mFlags;
-    // TODO(b/29547335): Get rid of this field and replace with an index.
-    //     The index will be into a separate global vector of UUIDs.
-    //     Also add an mId field (and change flatten/unflatten appropriately).
     uuid_t  mUuid;
+    int32_t mId;
     static void flattenString8(void*& buffer, size_t& size, const String8& string8);
     static bool unflattenString8(void const*& buffer, size_t& size, String8& outputString8);
 };

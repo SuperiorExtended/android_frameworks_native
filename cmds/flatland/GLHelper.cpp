@@ -14,15 +14,14 @@
  * limitations under the License.
  */
 
-#include <GLES2/gl2.h>
-#include <GLES2/gl2ext.h>
-
-#include <ui/DisplayInfo.h>
-#include <gui/SurfaceComposerClient.h>
-
 #include "GLHelper.h"
 
- namespace android {
+#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
+#include <gui/SurfaceComposerClient.h>
+#include <ui/DisplayMode.h>
+
+namespace android {
 
 GLHelper::GLHelper() :
     mDisplay(EGL_NO_DISPLAY),
@@ -36,8 +35,11 @@ GLHelper::GLHelper() :
 GLHelper::~GLHelper() {
 }
 
-bool GLHelper::setUp(const ShaderDesc* shaderDescs, size_t numShaders) {
+bool GLHelper::setUp(const sp<IBinder>& displayToken, const ShaderDesc* shaderDescs,
+                     size_t numShaders) {
     bool result;
+
+    mDisplayToken = displayToken;
 
     mDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (mDisplay == EGL_NO_DISPLAY) {
@@ -222,21 +224,15 @@ bool GLHelper::createNamedSurfaceTexture(GLuint name, uint32_t w, uint32_t h,
 }
 
 bool GLHelper::computeWindowScale(uint32_t w, uint32_t h, float* scale) {
-    sp<IBinder> dpy = mSurfaceComposerClient->getBuiltInDisplay(0);
-    if (dpy == nullptr) {
-        fprintf(stderr, "SurfaceComposer::getBuiltInDisplay failed.\n");
-        return false;
-    }
-
-    DisplayInfo info;
-    status_t err = mSurfaceComposerClient->getDisplayInfo(dpy, &info);
+    ui::DisplayMode mode;
+    status_t err = mSurfaceComposerClient->getActiveDisplayMode(mDisplayToken, &mode);
     if (err != NO_ERROR) {
-        fprintf(stderr, "SurfaceComposer::getDisplayInfo failed: %#x\n", err);
+        fprintf(stderr, "SurfaceComposer::getActiveDisplayMode failed: %#x\n", err);
         return false;
     }
 
-    float scaleX = float(info.w) / float(w);
-    float scaleY = float(info.h) / float(h);
+    float scaleX = static_cast<float>(mode.resolution.getWidth()) / w;
+    float scaleY = static_cast<float>(mode.resolution.getHeight()) / h;
     *scale = scaleX < scaleY ? scaleX : scaleY;
 
     return true;

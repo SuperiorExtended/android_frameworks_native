@@ -18,7 +18,10 @@
 #define ANDROID_SENSOR_DEVICE_UTIL
 
 #include <android/hidl/manager/1.0/IServiceNotification.h>
+#include <hardware/sensors.h>
+#include <utils/Log.h>
 
+#include <cmath>
 #include <condition_variable>
 #include <thread>
 
@@ -28,6 +31,24 @@ using ::android::hidl::manager::V1_0::IServiceNotification;
 
 namespace android {
 namespace SensorDeviceUtils {
+
+// Quantizes a single value to (a fractional factor of) a sensor's resolution. Typically we
+// increase the value of the sensor's nominal resolution to ensure that sensor accuracy
+// improvements, like runtime calibration, are not masked during requantization.
+inline void quantizeValue(float *value, double resolution, double factor = 0.125) {
+    if (resolution == 0) {
+        return;
+    }
+
+    double incRes = factor * resolution;
+    *value = round(static_cast<double>(*value) / incRes) * incRes;
+}
+
+// Ensures a sensor event doesn't provide values finer grained than its sensor resolution allows.
+void quantizeSensorEventValues(sensors_event_t *event, float resolution);
+
+// Returns the expected resolution value for the given sensor
+float resolutionForSensor(const sensor_t &sensor);
 
 class HidlServiceRegistrationWaiter : public IServiceNotification {
 public:

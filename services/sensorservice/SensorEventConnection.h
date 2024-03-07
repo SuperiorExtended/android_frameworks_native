@@ -17,12 +17,14 @@
 #ifndef ANDROID_SENSOR_EVENT_CONNECTION_H
 #define ANDROID_SENSOR_EVENT_CONNECTION_H
 
+#include <atomic>
+#include <optional>
 #include <stdint.h>
 #include <sys/types.h>
+#include <unordered_map>
 
 #include <utils/Vector.h>
 #include <utils/SortedVector.h>
-#include <utils/KeyedVector.h>
 #include <utils/threads.h>
 #include <utils/AndroidThreads.h>
 #include <utils/RefBase.h>
@@ -50,7 +52,7 @@ class SensorService::SensorEventConnection:
 public:
     SensorEventConnection(const sp<SensorService>& service, uid_t uid, String8 packageName,
                           bool isDataInjectionMode, const String16& opPackageName,
-                          bool hasSensorAccess);
+                          const String16& attributionTag);
 
     status_t sendEvents(sensors_event_t const* buffer, size_t count, sensors_event_t* scratch,
                         wp<const SensorEventConnection> const * mapFlushEventsToConnections = nullptr);
@@ -59,15 +61,18 @@ public:
     bool hasOneShotSensors() const;
     bool addSensor(int32_t handle);
     bool removeSensor(int32_t handle);
+    std::vector<int32_t> getActiveSensorHandles() const;
     void setFirstFlushPending(int32_t handle, bool value);
     void dump(String8& result);
+    void dump(util::ProtoOutputStream* proto) const;
     bool needsWakeLock();
     void resetWakeLockRefCount();
     String8 getPackageName() const;
 
     uid_t getUid() const { return mUid; }
-
-    void setSensorAccess(const bool hasAccess);
+    // cap/uncap existing connection depending on the state of the mic toggle.
+    void onMicSensorAccessChanged(bool isMicToggleOn);
+    userid_t getUserId() const { return mUserId; }
 
 private:
     virtual ~SensorEventConnection();
@@ -108,13 +113,18 @@ private:
     // size, reallocate memory and copy over events from the older cache.
     void reAllocateCacheLocked(sensors_event_t const* scratch, int count);
 
+    // Add the events to the cache. If the cache would be exceeded, drop events at the beginning of
+    // the cache.
+    void appendEventsToCacheLocked(sensors_event_t const* events, int count);
+
     // LooperCallback method. If there is data to read on this fd, it is an ack from the app that it
     // has read events from a wake up sensor, decrement mWakeLockRefCount.  If this fd is available
     // for writing send the data from the cache.
     virtual int handleEvent(int fd, int events, void* data);
 
-    // Increment mPendingFlushEventsToSend for the given sensor handle.
-    void incrementPendingFlushCount(int32_t handle);
+    // Increment mPendingFlushEventsToSend for the given handle if the connection has sensor access.
+    // Returns true if this connection does have sensor access.
+    bool incrementPendingFlushCountIfHasAccess(int32_t handle);
 
     // Add or remove the file descriptor associated with the BitTube to the looper. If mDead is set
     // to true or there are no more sensors for this connection, the file descriptor is removed if
@@ -126,6 +136,16 @@ private:
     void updateLooperRegistration(const sp<Looper>& looper); void
             updateLooperRegistrationLocked(const sp<Looper>& looper);
 
+    // Returns whether sensor access is available based on both the uid being active and sensor
+    // privacy not being enabled.
+    bool hasSensorAccess();
+
+    // Call noteOp for the sensor if the sensor requires a permission
+    bool noteOpIfRequired(const sensors_event_t& event);
+    // Limits all active connections when the mic toggle is flipped to on.
+    void capRates();
+    // Recover sensor connection previously capped by capRates().
+    void uncapRates();
     sp<SensorService> const mService;
     sp<BitTube> mChannel;
     uid_t mUid;
@@ -156,21 +176,41 @@ private:
 
         FlushInfo() : mPendingFlushEventsToSend(0), mFirstFlushPending(false) {}
     };
-    // protected by SensorService::mLock. Key for this vector is the sensor handle.
-    KeyedVector<int, FlushInfo> mSensorInfo;
+    // protected by SensorService::mLock. Key for this map is the sensor handle.
+    std::unordered_map<int32_t, FlushInfo> mSensorInfo;
 
     sensors_event_t *mEventCache;
     int mCacheSize, mMaxCacheSize;
+    int64_t mTimeOfLastEventDrop;
+    int mEventsDropped;
     String8 mPackageName;
     const String16 mOpPackageName;
+    const String16 mAttributionTag;
+    int mTargetSdk;
 #if DEBUG_CONNECTIONS
     int mEventsReceived, mEventsSent, mEventsSentFromCache;
     int mTotalAcksNeeded, mTotalAcksReceived;
 #endif
 
-    mutable Mutex mDestroyLock;
-    bool mDestroyed;
-    bool mHasSensorAccess;
+    // Used to track if this object was inappropriately used after destroy().
+    std::atomic_bool mDestroyed;
+
+    // Store a mapping of sensor handles to required AppOp for a sensor. This map only contains a
+    // valid mapping for sensors that require a permission in order to reduce the lookup time.
+    std::unordered_map<int32_t, int32_t> mHandleToAppOp;
+    // Mapping of sensor handles to its rate before being capped by the mic toggle.
+    std::unordered_map<int, nsecs_t> mMicSamplingPeriodBackup;
+    userid_t mUserId;
+
+    std::optional<bool> mIsRateCappedBasedOnPermission;
+
+    bool isRateCappedBasedOnPermission() {
+      if (!mIsRateCappedBasedOnPermission.has_value()) {
+        mIsRateCappedBasedOnPermission
+            = mService->isRateCappedBasedOnPermission(mOpPackageName);
+      }
+      return mIsRateCappedBasedOnPermission.value();
+    }
 };
 
 } // namepsace android

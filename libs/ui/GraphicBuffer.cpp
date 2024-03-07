@@ -15,6 +15,7 @@
  */
 
 #define LOG_TAG "GraphicBuffer"
+#define ATRACE_TAG ATRACE_TAG_GRAPHICS
 
 #include <ui/GraphicBuffer.h>
 
@@ -22,9 +23,9 @@
 
 #include <grallocusage/GrallocUsageConversion.h>
 
-#include <ui/Gralloc2.h>
 #include <ui/GraphicBufferAllocator.h>
 #include <ui/GraphicBufferMapper.h>
+#include <utils/Trace.h>
 
 namespace android {
 
@@ -43,6 +44,22 @@ sp<GraphicBuffer> GraphicBuffer::from(ANativeWindowBuffer* anwb) {
     return static_cast<GraphicBuffer *>(anwb);
 }
 
+GraphicBuffer* GraphicBuffer::fromAHardwareBuffer(AHardwareBuffer* buffer) {
+    return reinterpret_cast<GraphicBuffer*>(buffer);
+}
+
+GraphicBuffer const* GraphicBuffer::fromAHardwareBuffer(AHardwareBuffer const* buffer) {
+    return reinterpret_cast<GraphicBuffer const*>(buffer);
+}
+
+AHardwareBuffer* GraphicBuffer::toAHardwareBuffer() {
+    return reinterpret_cast<AHardwareBuffer*>(this);
+}
+
+AHardwareBuffer const* GraphicBuffer::toAHardwareBuffer() const {
+    return reinterpret_cast<AHardwareBuffer const*>(this);
+}
+
 GraphicBuffer::GraphicBuffer()
     : BASE(), mOwner(ownData), mBufferMapper(GraphicBufferMapper::get()),
       mInitCheck(NO_ERROR), mId(getUniqueId()), mGenerationNumber(0)
@@ -54,7 +71,7 @@ GraphicBuffer::GraphicBuffer()
     usage_deprecated = 0;
     usage  = 0;
     layerCount = 0;
-    handle = NULL;
+    handle = nullptr;
 }
 
 // deprecated
@@ -91,8 +108,12 @@ GraphicBuffer::GraphicBuffer(const native_handle_t* inHandle, HandleWrapMethod m
 
 GraphicBuffer::~GraphicBuffer()
 {
+    ATRACE_CALL();
     if (handle) {
         free_handle();
+    }
+    for (auto& [callback, context] : mDeathCallbacks) {
+        callback(context, mId);
     }
 }
 
@@ -104,7 +125,7 @@ void GraphicBuffer::free_handle()
         GraphicBufferAllocator& allocator(GraphicBufferAllocator::get());
         allocator.free(handle);
     }
-    handle = NULL;
+    handle = nullptr;
 }
 
 status_t GraphicBuffer::initCheck() const {
@@ -139,7 +160,7 @@ status_t GraphicBuffer::reallocate(uint32_t inWidth, uint32_t inHeight,
     if (handle) {
         GraphicBufferAllocator& allocator(GraphicBufferAllocator::get());
         allocator.free(handle);
-        handle = 0;
+        handle = nullptr;
     }
     return initWithSize(inWidth, inHeight, inFormat, inLayerCount, inUsage, "[Reallocation]");
 }
@@ -152,6 +173,7 @@ bool GraphicBuffer::needsReallocation(uint32_t inWidth, uint32_t inHeight,
     if (inFormat != format) return true;
     if (inLayerCount != layerCount) return true;
     if ((usage & inUsage) != inUsage) return true;
+    if ((usage & USAGE_PROTECTED) != (inUsage & USAGE_PROTECTED)) return true;
     return false;
 }
 
@@ -216,15 +238,15 @@ status_t GraphicBuffer::initWithHandle(const native_handle_t* inHandle, HandleWr
     return NO_ERROR;
 }
 
-status_t GraphicBuffer::lock(uint32_t inUsage, void** vaddr)
-{
+status_t GraphicBuffer::lock(uint32_t inUsage, void** vaddr, int32_t* outBytesPerPixel,
+                             int32_t* outBytesPerStride) {
     const Rect lockBounds(width, height);
-    status_t res = lock(inUsage, lockBounds, vaddr);
+    status_t res = lock(inUsage, lockBounds, vaddr, outBytesPerPixel, outBytesPerStride);
     return res;
 }
 
-status_t GraphicBuffer::lock(uint32_t inUsage, const Rect& rect, void** vaddr)
-{
+status_t GraphicBuffer::lock(uint32_t inUsage, const Rect& rect, void** vaddr,
+                             int32_t* outBytesPerPixel, int32_t* outBytesPerStride) {
     if (rect.left < 0 || rect.right  > width ||
         rect.top  < 0 || rect.bottom > height) {
         ALOGE("locking pixels (%d,%d,%d,%d) outside of buffer (w=%d, h=%d)",
@@ -232,7 +254,10 @@ status_t GraphicBuffer::lock(uint32_t inUsage, const Rect& rect, void** vaddr)
                 width, height);
         return BAD_VALUE;
     }
-    status_t res = getBufferMapper().lock(handle, inUsage, rect, vaddr);
+
+    status_t res = getBufferMapper().lock(handle, inUsage, rect, vaddr, outBytesPerPixel,
+                                          outBytesPerStride);
+
     return res;
 }
 
@@ -263,22 +288,22 @@ status_t GraphicBuffer::unlock()
     return res;
 }
 
-status_t GraphicBuffer::lockAsync(uint32_t inUsage, void** vaddr, int fenceFd)
-{
+status_t GraphicBuffer::lockAsync(uint32_t inUsage, void** vaddr, int fenceFd,
+                                  int32_t* outBytesPerPixel, int32_t* outBytesPerStride) {
     const Rect lockBounds(width, height);
-    status_t res = lockAsync(inUsage, lockBounds, vaddr, fenceFd);
+    status_t res =
+            lockAsync(inUsage, lockBounds, vaddr, fenceFd, outBytesPerPixel, outBytesPerStride);
     return res;
 }
 
-status_t GraphicBuffer::lockAsync(uint32_t inUsage, const Rect& rect,
-        void** vaddr, int fenceFd)
-{
-    return lockAsync(inUsage, inUsage, rect, vaddr, fenceFd);
+status_t GraphicBuffer::lockAsync(uint32_t inUsage, const Rect& rect, void** vaddr, int fenceFd,
+                                  int32_t* outBytesPerPixel, int32_t* outBytesPerStride) {
+    return lockAsync(inUsage, inUsage, rect, vaddr, fenceFd, outBytesPerPixel, outBytesPerStride);
 }
 
-status_t GraphicBuffer::lockAsync(uint64_t inProducerUsage,
-        uint64_t inConsumerUsage, const Rect& rect, void** vaddr, int fenceFd)
-{
+status_t GraphicBuffer::lockAsync(uint64_t inProducerUsage, uint64_t inConsumerUsage,
+                                  const Rect& rect, void** vaddr, int fenceFd,
+                                  int32_t* outBytesPerPixel, int32_t* outBytesPerStride) {
     if (rect.left < 0 || rect.right  > width ||
         rect.top  < 0 || rect.bottom > height) {
         ALOGE("locking pixels (%d,%d,%d,%d) outside of buffer (w=%d, h=%d)",
@@ -286,8 +311,10 @@ status_t GraphicBuffer::lockAsync(uint64_t inProducerUsage,
                 width, height);
         return BAD_VALUE;
     }
-    status_t res = getBufferMapper().lockAsync(handle, inProducerUsage,
-            inConsumerUsage, rect, vaddr, fenceFd);
+
+    status_t res = getBufferMapper().lockAsync(handle, inProducerUsage, inConsumerUsage, rect,
+                                               vaddr, fenceFd, outBytesPerPixel, outBytesPerStride);
+
     return res;
 }
 
@@ -317,6 +344,13 @@ status_t GraphicBuffer::unlockAsync(int *fenceFd)
 {
     status_t res = getBufferMapper().unlockAsync(handle, fenceFd);
     return res;
+}
+
+status_t GraphicBuffer::isSupported(uint32_t inWidth, uint32_t inHeight, PixelFormat inFormat,
+                                    uint32_t inLayerCount, uint64_t inUsage,
+                                    bool* outSupported) const {
+    return mBufferMapper.isSupported(inWidth, inHeight, inFormat, inLayerCount, inUsage,
+                                     outSupported);
 }
 
 size_t GraphicBuffer::getFlattenedSize() const {
@@ -354,7 +388,7 @@ status_t GraphicBuffer::flatten(void*& buffer, size_t& size, int*& fds, size_t& 
         buf[11] = int32_t(mTransportNumInts);
         memcpy(fds, handle->data, static_cast<size_t>(mTransportNumFds) * sizeof(int));
         memcpy(buf + 13, handle->data + handle->numFds,
-                static_cast<size_t>(mTransportNumInts) * sizeof(int));
+               static_cast<size_t>(mTransportNumInts) * sizeof(int));
     }
 
     buffer = static_cast<void*>(static_cast<uint8_t*>(buffer) + sizeNeeded);
@@ -363,14 +397,13 @@ status_t GraphicBuffer::flatten(void*& buffer, size_t& size, int*& fds, size_t& 
         fds += mTransportNumFds;
         count -= static_cast<size_t>(mTransportNumFds);
     }
-
     return NO_ERROR;
 }
 
-status_t GraphicBuffer::unflatten(
-        void const*& buffer, size_t& size, int const*& fds, size_t& count) {
-    if (size < 12 * sizeof(int)) {
-        android_errorWriteLog(0x534e4554, "114223584");
+status_t GraphicBuffer::unflatten(void const*& buffer, size_t& size, int const*& fds,
+                                  size_t& count) {
+    // Check if size is not smaller than buf[0] is supposed to take.
+    if (size < sizeof(int)) {
         return NO_MEMORY;
     }
 
@@ -389,6 +422,11 @@ status_t GraphicBuffer::unflatten(
         return BAD_TYPE;
     }
 
+    if (size < 12 * sizeof(int)) {
+        android_errorWriteLog(0x534e4554, "114223584");
+        return NO_MEMORY;
+    }
+
     const size_t numFds  = static_cast<size_t>(buf[10]);
     const size_t numInts = static_cast<size_t>(buf[11]);
 
@@ -401,7 +439,7 @@ status_t GraphicBuffer::unflatten(
         width = height = stride = format = usage_deprecated = 0;
         layerCount = 0;
         usage = 0;
-        handle = NULL;
+        handle = nullptr;
         ALOGE("unflatten: numFds or numInts is too large: %zd, %zd", numFds, numInts);
         return BAD_VALUE;
     }
@@ -427,15 +465,15 @@ status_t GraphicBuffer::unflatten(
         if (flattenWordCount == 13) {
             usage = (uint64_t(buf[12]) << 32) | uint32_t(buf[6]);
         } else {
-            usage = uint64_t(usage_deprecated);
+            usage = uint64_t(ANDROID_NATIVE_UNSIGNED_CAST(usage_deprecated));
         }
-        native_handle* h = native_handle_create(
-                static_cast<int>(numFds), static_cast<int>(numInts));
+        native_handle* h =
+                native_handle_create(static_cast<int>(numFds), static_cast<int>(numInts));
         if (!h) {
             width = height = stride = format = usage_deprecated = 0;
             layerCount = 0;
             usage = 0;
-            handle = NULL;
+            handle = nullptr;
             ALOGE("unflatten: native_handle_create failed");
             return NO_MEMORY;
         }
@@ -446,7 +484,7 @@ status_t GraphicBuffer::unflatten(
         width = height = stride = format = usage_deprecated = 0;
         layerCount = 0;
         usage = 0;
-        handle = NULL;
+        handle = nullptr;
     }
 
     mId = static_cast<uint64_t>(buf[7]) << 32;
@@ -456,7 +494,7 @@ status_t GraphicBuffer::unflatten(
 
     mOwner = ownHandle;
 
-    if (handle != 0) {
+    if (handle != nullptr) {
         buffer_handle_t importedHandle;
         status_t err = mBufferMapper.importBuffer(handle, uint32_t(width), uint32_t(height),
                 uint32_t(layerCount), format, usage, uint32_t(stride), &importedHandle);
@@ -464,7 +502,7 @@ status_t GraphicBuffer::unflatten(
             width = height = stride = format = usage_deprecated = 0;
             layerCount = 0;
             usage = 0;
-            handle = NULL;
+            handle = nullptr;
             ALOGE("unflatten: registerBuffer failed: %s (%d)", strerror(-err), err);
             return err;
         }
@@ -479,8 +517,11 @@ status_t GraphicBuffer::unflatten(
     size -= sizeNeeded;
     fds += numFds;
     count -= numFds;
-
     return NO_ERROR;
+}
+
+void GraphicBuffer::addDeathCallback(GraphicBufferDeathCallback deathCallback, void* context) {
+    mDeathCallbacks.emplace_back(deathCallback, context);
 }
 
 // ---------------------------------------------------------------------------

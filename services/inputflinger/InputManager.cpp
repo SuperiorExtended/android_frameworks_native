@@ -19,49 +19,82 @@
 //#define LOG_NDEBUG 0
 
 #include "InputManager.h"
+#include "InputDispatcherFactory.h"
+#include "InputReaderFactory.h"
+#include "UnwantedInteractionBlocker.h"
+
+#include <android/sysprop/InputProperties.sysprop.h>
+#include <binder/IPCThreadState.h>
 
 #include <log/log.h>
+#include <unordered_map>
+
+#include <private/android_filesystem_config.h>
 
 namespace android {
 
-InputManager::InputManager(
-        const sp<EventHubInterface>& eventHub,
-        const sp<InputReaderPolicyInterface>& readerPolicy,
-        const sp<InputDispatcherPolicyInterface>& dispatcherPolicy) {
-    mDispatcher = new InputDispatcher(dispatcherPolicy);
-    mReader = new InputReader(eventHub, readerPolicy, mDispatcher);
-    initialize();
+static const bool ENABLE_INPUT_DEVICE_USAGE_METRICS =
+        sysprop::InputProperties::enable_input_device_usage_metrics().value_or(true);
+
+using gui::FocusRequest;
+
+static int32_t exceptionCodeFromStatusT(status_t status) {
+    switch (status) {
+        case OK:
+            return binder::Status::EX_NONE;
+        case INVALID_OPERATION:
+            return binder::Status::EX_UNSUPPORTED_OPERATION;
+        case BAD_VALUE:
+        case BAD_TYPE:
+        case NAME_NOT_FOUND:
+            return binder::Status::EX_ILLEGAL_ARGUMENT;
+        case NO_INIT:
+            return binder::Status::EX_ILLEGAL_STATE;
+        case PERMISSION_DENIED:
+            return binder::Status::EX_SECURITY;
+        default:
+            return binder::Status::EX_TRANSACTION_FAILED;
+    }
 }
 
-InputManager::InputManager(
-        const sp<InputReaderInterface>& reader,
-        const sp<InputDispatcherInterface>& dispatcher) :
-        mReader(reader),
-        mDispatcher(dispatcher) {
-    initialize();
+/**
+ * The event flow is via the "InputListener" interface, as follows:
+ *   InputReader
+ *     -> UnwantedInteractionBlocker
+ *     -> InputProcessor
+ *     -> InputDeviceMetricsCollector
+ *     -> InputDispatcher
+ */
+InputManager::InputManager(const sp<InputReaderPolicyInterface>& readerPolicy,
+                           InputDispatcherPolicyInterface& dispatcherPolicy) {
+    mDispatcher = createInputDispatcher(dispatcherPolicy);
+
+    if (ENABLE_INPUT_DEVICE_USAGE_METRICS) {
+        mCollector = std::make_unique<InputDeviceMetricsCollector>(*mDispatcher);
+    }
+
+    mProcessor = ENABLE_INPUT_DEVICE_USAGE_METRICS ? std::make_unique<InputProcessor>(*mCollector)
+                                                   : std::make_unique<InputProcessor>(*mDispatcher);
+    mBlocker = std::make_unique<UnwantedInteractionBlocker>(*mProcessor);
+    mReader = createInputReader(readerPolicy, *mBlocker);
 }
 
 InputManager::~InputManager() {
     stop();
 }
 
-void InputManager::initialize() {
-    mReaderThread = new InputReaderThread(mReader);
-    mDispatcherThread = new InputDispatcherThread(mDispatcher);
-}
-
 status_t InputManager::start() {
-    status_t result = mDispatcherThread->run("InputDispatcher", PRIORITY_URGENT_DISPLAY);
+    status_t result = mDispatcher->start();
     if (result) {
         ALOGE("Could not start InputDispatcher thread due to error %d.", result);
         return result;
     }
 
-    result = mReaderThread->run("InputReader", PRIORITY_URGENT_DISPLAY);
+    result = mReader->start();
     if (result) {
-        ALOGE("Could not start InputReader thread due to error %d.", result);
+        ALOGE("Could not start InputReader due to error %d.", result);
 
-        mDispatcherThread->requestExit();
+        mDispatcher->stop();
         return result;
     }
 
@@ -69,25 +102,97 @@ status_t InputManager::start() {
 }
 
 status_t InputManager::stop() {
-    status_t result = mReaderThread->requestExitAndWait();
+    status_t status = OK;
+
+    status_t result = mReader->stop();
     if (result) {
-        ALOGW("Could not stop InputReader thread due to error %d.", result);
+        ALOGW("Could not stop InputReader due to error %d.", result);
+        status = result;
     }
 
-    result = mDispatcherThread->requestExitAndWait();
+    result = mDispatcher->stop();
     if (result) {
         ALOGW("Could not stop InputDispatcher thread due to error %d.", result);
+        status = result;
     }
 
-    return OK;
+    return status;
 }
 
-sp<InputReaderInterface> InputManager::getReader() {
-    return mReader;
+InputReaderInterface& InputManager::getReader() {
+    return *mReader;
 }
 
-sp<InputDispatcherInterface> InputManager::getDispatcher() {
-    return mDispatcher;
+InputProcessorInterface& InputManager::getProcessor() {
+    return *mProcessor;
+}
+
+InputDeviceMetricsCollectorInterface& InputManager::getMetricsCollector() {
+    return *mCollector;
+}
+
+InputDispatcherInterface& InputManager::getDispatcher() {
+    return *mDispatcher;
+}
+
+void InputManager::monitor() {
+    mReader->monitor();
+    mBlocker->monitor();
+    mProcessor->monitor();
+    mDispatcher->monitor();
+}
+
+void InputManager::dump(std::string& dump) {
+    mReader->dump(dump);
+    dump += '\n';
+    mBlocker->dump(dump);
+    dump += '\n';
+    mProcessor->dump(dump);
+    dump += '\n';
+    if (ENABLE_INPUT_DEVICE_USAGE_METRICS) {
+        mCollector->dump(dump);
+        dump += '\n';
+    }
+    mDispatcher->dump(dump);
+    dump += '\n';
+}
+
+// Used by tests only.
+binder::Status InputManager::createInputChannel(const std::string& name, InputChannel* outChannel) {
+    IPCThreadState* ipc = IPCThreadState::self();
+    const int uid = ipc->getCallingUid();
+    if (uid != AID_SHELL && uid != AID_ROOT) {
+        ALOGE("Invalid attempt to register input channel over IPC"
+                "from non shell/root entity (PID: %d)", ipc->getCallingPid());
+        return binder::Status::ok();
+    }
+
+    base::Result<std::unique_ptr<InputChannel>> channel = mDispatcher->createInputChannel(name);
+    if (!channel.ok()) {
+        return binder::Status::fromExceptionCode(exceptionCodeFromStatusT(channel.error().code()),
+                                                 channel.error().message().c_str());
+    }
+    (*channel)->copyTo(*outChannel);
+    return binder::Status::ok();
+}
+
+binder::Status InputManager::removeInputChannel(const sp<IBinder>& connectionToken) {
+    mDispatcher->removeInputChannel(connectionToken);
+    return binder::Status::ok();
+}
+
+status_t InputManager::dump(int fd, const Vector<String16>& args) {
+    std::string dump;
+
+    dump += " InputFlinger dump\n";
+
+    ::write(fd, dump.c_str(), dump.size());
+    return NO_ERROR;
+}
+
+binder::Status InputManager::setFocusedWindow(const FocusRequest& request) {
+    mDispatcher->setFocusedWindow(request);
+    return binder::Status::ok();
 }
 
 } // namespace android

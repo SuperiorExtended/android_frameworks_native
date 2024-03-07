@@ -14,10 +14,14 @@
  * limitations under the License.
  */
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <android-base/logging.h>
+#include <android-base/scopeguard.h>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include "InstalldNativeService.h"
@@ -43,6 +47,8 @@
 
 namespace android {
 namespace installd {
+
+using ::testing::UnorderedElementsAre;
 
 class UtilsTest : public testing::Test {
 protected:
@@ -103,12 +109,12 @@ TEST_F(UtilsTest, IsValidApkPath_Internal) {
     EXPECT_EQ(-1, validate_apk_path(badint2))
             << badint2 << " should be rejected as a invalid path";
 
-    // Only one subdir should be allowed.
-    const char *bad_path3 = TEST_APP_DIR "example.com/subdir/pkg.apk";
+    // Should not have more than two sub directories
+    const char *bad_path3 = TEST_APP_DIR "random/example.com/subdir/pkg.apk";
     EXPECT_EQ(-1, validate_apk_path(bad_path3))
             << bad_path3 << " should be rejected as a invalid path";
 
-    const char *bad_path4 = TEST_APP_DIR "example.com/subdir/../pkg.apk";
+    const char *bad_path4 = TEST_APP_DIR "random/example.com/subdir/pkg.apk";
     EXPECT_EQ(-1, validate_apk_path(bad_path4))
             << bad_path4 << " should be rejected as a invalid path";
 
@@ -119,6 +125,7 @@ TEST_F(UtilsTest, IsValidApkPath_Internal) {
 
 TEST_F(UtilsTest, IsValidApkPath_TopDir) {
     EXPECT_EQ(0, validate_apk_path(TEST_DATA_DIR "app/com.example"));
+    EXPECT_EQ(0, validate_apk_path(TEST_DATA_DIR "app/random/com.example"));
     EXPECT_EQ(0, validate_apk_path(TEST_EXPAND_DIR "app/com.example"));
     EXPECT_EQ(-1, validate_apk_path(TEST_DATA_DIR "data/com.example"));
     EXPECT_EQ(-1, validate_apk_path(TEST_EXPAND_DIR "data/com.example"));
@@ -126,6 +133,7 @@ TEST_F(UtilsTest, IsValidApkPath_TopDir) {
 
 TEST_F(UtilsTest, IsValidApkPath_TopFile) {
     EXPECT_EQ(0, validate_apk_path(TEST_DATA_DIR "app/com.example/base.apk"));
+    EXPECT_EQ(0, validate_apk_path(TEST_DATA_DIR "app/random/com.example/base.apk"));
     EXPECT_EQ(0, validate_apk_path(TEST_EXPAND_DIR "app/com.example/base.apk"));
     EXPECT_EQ(-1, validate_apk_path(TEST_DATA_DIR "data/com.example/base.apk"));
     EXPECT_EQ(-1, validate_apk_path(TEST_EXPAND_DIR "data/com.example/base.apk"));
@@ -133,6 +141,7 @@ TEST_F(UtilsTest, IsValidApkPath_TopFile) {
 
 TEST_F(UtilsTest, IsValidApkPath_OatDir) {
     EXPECT_EQ(0, validate_apk_path_subdirs(TEST_DATA_DIR "app/com.example/oat"));
+    EXPECT_EQ(0, validate_apk_path_subdirs(TEST_DATA_DIR "app/random/com.example/oat"));
     EXPECT_EQ(0, validate_apk_path_subdirs(TEST_EXPAND_DIR "app/com.example/oat"));
     EXPECT_EQ(-1, validate_apk_path_subdirs(TEST_DATA_DIR "data/com.example/oat"));
     EXPECT_EQ(-1, validate_apk_path_subdirs(TEST_EXPAND_DIR "data/com.example/oat"));
@@ -140,6 +149,7 @@ TEST_F(UtilsTest, IsValidApkPath_OatDir) {
 
 TEST_F(UtilsTest, IsValidApkPath_OatDirDir) {
     EXPECT_EQ(0, validate_apk_path_subdirs(TEST_DATA_DIR "app/com.example/oat/arm64"));
+    EXPECT_EQ(0, validate_apk_path_subdirs(TEST_DATA_DIR "app/random/com.example/oat/arm64"));
     EXPECT_EQ(0, validate_apk_path_subdirs(TEST_EXPAND_DIR "app/com.example/oat/arm64"));
     EXPECT_EQ(-1, validate_apk_path_subdirs(TEST_DATA_DIR "data/com.example/oat/arm64"));
     EXPECT_EQ(-1, validate_apk_path_subdirs(TEST_EXPAND_DIR "data/com.example/oat/arm64"));
@@ -147,6 +157,7 @@ TEST_F(UtilsTest, IsValidApkPath_OatDirDir) {
 
 TEST_F(UtilsTest, IsValidApkPath_OatDirDirFile) {
     EXPECT_EQ(0, validate_apk_path_subdirs(TEST_DATA_DIR "app/com.example/oat/arm64/base.odex"));
+    EXPECT_EQ(0, validate_apk_path_subdirs(TEST_DATA_DIR "app/random/com.example/oat/arm64/base.odex"));
     EXPECT_EQ(0, validate_apk_path_subdirs(TEST_EXPAND_DIR "app/com.example/oat/arm64/base.odex"));
     EXPECT_EQ(-1, validate_apk_path_subdirs(TEST_DATA_DIR "data/com.example/oat/arm64/base.odex"));
     EXPECT_EQ(-1, validate_apk_path_subdirs(TEST_EXPAND_DIR "data/com.example/oat/arm64/base.odex"));
@@ -163,6 +174,10 @@ TEST_F(UtilsTest, IsValidApkPath_Private) {
     EXPECT_EQ(0, validate_apk_path(path2))
             << path2 << " should be allowed as a valid path";
 
+    const char *path3 = TEST_APP_DIR "random/example.com/example.apk";
+    EXPECT_EQ(0, validate_apk_path(path3))
+            << path3 << " should be allowed as a valid path";
+
     const char *badpriv1 = TEST_APP_PRIVATE_DIR "../example.apk";
     EXPECT_EQ(-1, validate_apk_path(badpriv1))
             << badpriv1 << " should be rejected as a invalid path";
@@ -171,16 +186,16 @@ TEST_F(UtilsTest, IsValidApkPath_Private) {
     EXPECT_EQ(-1, validate_apk_path(badpriv2))
             << badpriv2 << " should be rejected as a invalid path";
 
-    // Only one subdir should be allowed.
-    const char *bad_path3 = TEST_APP_PRIVATE_DIR "example.com/subdir/pkg.apk";
+    // Only one or two subdir should be allowed.
+    const char *bad_path3 = TEST_APP_PRIVATE_DIR "random/example.com/subdir/pkg.apk";
     EXPECT_EQ(-1, validate_apk_path(bad_path3))
             << bad_path3 << " should be rejected as a invalid path";
 
-    const char *bad_path4 = TEST_APP_PRIVATE_DIR "example.com/subdir/../pkg.apk";
+    const char *bad_path4 = TEST_APP_PRIVATE_DIR "random/example.com/subdir/../pkg.apk";
     EXPECT_EQ(-1, validate_apk_path(bad_path4))
             << bad_path4 << " should be rejected as a invalid path";
 
-    const char *bad_path5 = TEST_APP_PRIVATE_DIR "example.com1/../example.com2/pkg.apk";
+    const char *bad_path5 = TEST_APP_PRIVATE_DIR "random/example.com1/../example.com2/pkg.apk";
     EXPECT_EQ(-1, validate_apk_path(bad_path5))
             << bad_path5 << " should be rejected as a invalid path";
 }
@@ -228,10 +243,16 @@ TEST_F(UtilsTest, IsValidApkPath_SubdirEscapeSingleFail) {
             << badasec6 << " should be rejected as a invalid path";
 }
 
-TEST_F(UtilsTest, IsValidApkPath_TwoSubdirFail) {
-    const char *badasec7 = TEST_ASEC_DIR "com.example.asec/subdir1/pkg.apk";
-    EXPECT_EQ(-1, validate_apk_path(badasec7))
-            << badasec7 << " should be rejected as a invalid path";
+TEST_F(UtilsTest, IsValidApkPath_TwoSubdir) {
+    const char *badasec7 = TEST_ASEC_DIR "random/com.example.asec/pkg.apk";
+    EXPECT_EQ(0, validate_apk_path(badasec7))
+            << badasec7 << " should be allowed as a valid path";
+}
+
+TEST_F(UtilsTest, IsValidApkPath_ThreeSubdirFail) {
+    const char *badasec8 = TEST_ASEC_DIR "random/com.example.asec/subdir/pkg.apk";
+    EXPECT_EQ(-1, validate_apk_path(badasec8))
+            << badasec8 << " should be rejcted as an invalid path";
 }
 
 TEST_F(UtilsTest, CheckSystemApp_Dir1) {
@@ -313,13 +334,6 @@ TEST_F(UtilsTest, CreateDataMediaPath) {
             create_data_media_path("57f8f4bc-abf4-655f-bf67-946fc0f9f25b", 0));
     EXPECT_EQ("/mnt/expand/57f8f4bc-abf4-655f-bf67-946fc0f9f25b/media/10",
             create_data_media_path("57f8f4bc-abf4-655f-bf67-946fc0f9f25b", 10));
-}
-
-TEST_F(UtilsTest, CreateDataAppPackagePath) {
-    EXPECT_EQ("/data/app/com.example", create_data_app_package_path(nullptr, "com.example"));
-
-    EXPECT_EQ("/mnt/expand/57f8f4bc-abf4-655f-bf67-946fc0f9f25b/app/com.example",
-            create_data_app_package_path("57f8f4bc-abf4-655f-bf67-946fc0f9f25b", "com.example"));
 }
 
 TEST_F(UtilsTest, CreateDataUserPackagePath) {
@@ -510,8 +524,8 @@ TEST_F(UtilsTest, ValidateApkPath) {
     EXPECT_EQ(0, validate_apk_path("/data/app/com.example"));
     EXPECT_EQ(0, validate_apk_path("/data/app/com.example/file"));
     EXPECT_EQ(0, validate_apk_path("/data/app/com.example//file"));
-    EXPECT_NE(0, validate_apk_path("/data/app/com.example/dir/"));
-    EXPECT_NE(0, validate_apk_path("/data/app/com.example/dir/file"));
+    EXPECT_EQ(0, validate_apk_path("/data/app/random/com.example/"));
+    EXPECT_EQ(0, validate_apk_path("/data/app/random/com.example/file"));
     EXPECT_NE(0, validate_apk_path("/data/app/com.example/dir/dir/file"));
     EXPECT_NE(0, validate_apk_path("/data/app/com.example/dir/dir//file"));
     EXPECT_NE(0, validate_apk_path("/data/app/com.example/dir/dir/dir/file"));
@@ -526,8 +540,10 @@ TEST_F(UtilsTest, ValidateApkPathSubdirs) {
     EXPECT_EQ(0, validate_apk_path_subdirs("/data/app/com.example/dir/file"));
     EXPECT_EQ(0, validate_apk_path_subdirs("/data/app/com.example/dir/dir/file"));
     EXPECT_EQ(0, validate_apk_path_subdirs("/data/app/com.example/dir/dir//file"));
-    EXPECT_NE(0, validate_apk_path_subdirs("/data/app/com.example/dir/dir/dir/file"));
-    EXPECT_NE(0, validate_apk_path_subdirs("/data/app/com.example/dir/dir/dir//file"));
+    EXPECT_EQ(0, validate_apk_path_subdirs("/data/app/com.example/dir/dir/dir/file"));
+    EXPECT_EQ(0, validate_apk_path_subdirs("/data/app/com.example/dir/dir/dir//file"));
+    EXPECT_NE(0, validate_apk_path_subdirs("/data/app/com.example/dir/dir/dir/dir/file"));
+    EXPECT_NE(0, validate_apk_path_subdirs("/data/app/com.example/dir/dir/dir/dir//file"));
 }
 
 TEST_F(UtilsTest, MatchExtension_Valid) {
@@ -542,6 +558,200 @@ TEST_F(UtilsTest, MatchExtension_Invalid) {
     EXPECT_EQ(0, MatchExtension("3amp"));
     EXPECT_EQ(0, MatchExtension("fpe"));
     EXPECT_EQ(0, MatchExtension("docx"));
+}
+
+TEST_F(UtilsTest, TestIsRenamedDeletedDir) {
+    EXPECT_FALSE(is_renamed_deleted_dir(""));
+    EXPECT_FALSE(is_renamed_deleted_dir("1"));
+    EXPECT_FALSE(is_renamed_deleted_dir("="));
+    EXPECT_FALSE(is_renamed_deleted_dir("=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("d=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("ed=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("ted=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("eted=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("leted=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("eleted=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("deleted=="));
+    EXPECT_FALSE(is_renamed_deleted_dir("=deleted=="));
+    EXPECT_TRUE(is_renamed_deleted_dir("==deleted=="));
+    EXPECT_TRUE(is_renamed_deleted_dir("123==deleted=="));
+    EXPECT_TRUE(is_renamed_deleted_dir("5b14b6458a44==deleted=="));
+}
+
+TEST_F(UtilsTest, TestRollbackPaths) {
+    EXPECT_EQ("/data/misc_ce/0/rollback/239/com.foo",
+            create_data_misc_ce_rollback_package_path(nullptr, 0, 239, "com.foo"));
+    EXPECT_EQ("/data/misc_ce/10/rollback/37/com.foo",
+            create_data_misc_ce_rollback_package_path(nullptr, 10, 37, "com.foo"));
+
+    EXPECT_EQ("/data/misc_de/0/rollback/73/com.foo",
+            create_data_misc_de_rollback_package_path(nullptr, 0, 73, "com.foo"));
+    EXPECT_EQ("/data/misc_de/10/rollback/13/com.foo",
+            create_data_misc_de_rollback_package_path(nullptr, 10, 13, "com.foo"));
+
+    EXPECT_EQ("/data/misc_ce/0/rollback/57",
+            create_data_misc_ce_rollback_path(nullptr, 0, 57));
+    EXPECT_EQ("/data/misc_ce/10/rollback/1543",
+            create_data_misc_ce_rollback_path(nullptr, 10, 1543));
+
+    EXPECT_EQ("/data/misc_de/0/rollback/43",
+            create_data_misc_de_rollback_path(nullptr, 0, 43));
+    EXPECT_EQ("/data/misc_de/10/rollback/41",
+            create_data_misc_de_rollback_path(nullptr, 10, 41));
+
+    EXPECT_EQ("/data/misc_ce/0/rollback/17/com.foo",
+            create_data_misc_ce_rollback_package_path(nullptr, 0, 17, "com.foo", 0));
+    EXPECT_EQ("/data/misc_ce/0/rollback/19/com.foo",
+            create_data_misc_ce_rollback_package_path(nullptr, 0, 19, "com.foo", 239));
+
+    auto rollback_ce_path = create_data_misc_ce_rollback_path(nullptr, 0, 53);
+    auto rollback_ce_package_path = create_data_misc_ce_rollback_package_path(nullptr, 0, 53,
+            "com.foo");
+    auto deleter = [&rollback_ce_path]() {
+        delete_dir_contents_and_dir(rollback_ce_path, true /* ignore_if_missing */);
+    };
+    auto scope_guard = android::base::make_scope_guard(deleter);
+
+    EXPECT_NE(-1, mkdir(rollback_ce_path.c_str(), 700));
+    EXPECT_NE(-1, mkdir(rollback_ce_package_path.c_str(), 700));
+
+    ino_t ce_data_inode;
+    EXPECT_EQ(0, get_path_inode(rollback_ce_package_path, &ce_data_inode));
+
+    EXPECT_EQ("/data/misc_ce/0/rollback/53/com.foo",
+            create_data_misc_ce_rollback_package_path(nullptr, 0, 53, "com.foo", ce_data_inode));
+    // Check that path defined by inode is picked even if it's not the same as
+    // the fallback one.
+    EXPECT_EQ("/data/misc_ce/0/rollback/53/com.foo",
+            create_data_misc_ce_rollback_package_path(nullptr, 0, 53, "com.bar", ce_data_inode));
+
+    // These last couple of cases are never exercised in production because we
+    // only snapshot apps in the primary data partition. Exercise them here for
+    // the sake of completeness.
+    EXPECT_EQ("/mnt/expand/57f8f4bc-abf4-655f-bf67-946fc0f9f25b/misc_ce/0/rollback/7/com.example",
+            create_data_misc_ce_rollback_package_path("57f8f4bc-abf4-655f-bf67-946fc0f9f25b", 0, 7,
+                    "com.example"));
+    EXPECT_EQ("/mnt/expand/57f8f4bc-abf4-655f-bf67-946fc0f9f25b/misc_de/0/rollback/11/com.example",
+            create_data_misc_de_rollback_package_path("57f8f4bc-abf4-655f-bf67-946fc0f9f25b", 0, 11,
+                    "com.example"));
+}
+
+TEST_F(UtilsTest, TestCreateDirIfNeeded) {
+    system("mkdir -p /data/local/tmp/user/0");
+
+    auto deleter = [&]() {
+        delete_dir_contents_and_dir("/data/local/tmp/user/0", true /* ignore_if_missing */);
+    };
+    auto scope_guard = android::base::make_scope_guard(deleter);
+
+    // Create folder and check it's permissions.
+    ASSERT_EQ(0, create_dir_if_needed("/data/local/tmp/user/0/foo", 0700));
+    struct stat st;
+    ASSERT_EQ(0, stat("/data/local/tmp/user/0/foo", &st));
+    ASSERT_EQ(0700, st.st_mode & ALLPERMS);
+
+    // Check that create_dir_if_needed is no-op if folder already exists with
+    // correct permissions.
+    ASSERT_EQ(0, create_dir_if_needed("/data/local/tmp/user/0/foo", 0700));
+
+    // Check -1 is returned if folder exists but with different permissions.
+    ASSERT_EQ(-1, create_dir_if_needed("/data/local/tmp/user/0/foo", 0750));
+
+    // Check that call fails if parent doesn't exist.
+    ASSERT_NE(0, create_dir_if_needed("/data/local/tmp/user/0/bar/baz", 0700));
+}
+
+TEST_F(UtilsTest, TestForEachSubdir) {
+    auto deleter = [&]() {
+        delete_dir_contents_and_dir("/data/local/tmp/user/0", true /* ignore_if_missing */);
+    };
+    auto scope_guard = android::base::make_scope_guard(deleter);
+
+    system("mkdir -p /data/local/tmp/user/0/com.foo");
+    system("mkdir -p /data/local/tmp/user/0/com.bar");
+    system("touch /data/local/tmp/user/0/some-file");
+
+    std::vector<std::string> result;
+    foreach_subdir("/data/local/tmp/user/0",
+                   [&](const std::string &filename) { result.push_back(filename); });
+
+    EXPECT_THAT(result, UnorderedElementsAre("com.foo", "com.bar"));
+}
+
+TEST_F(UtilsTest, TestSdkSandboxDataPaths) {
+    // Ce data paths
+    EXPECT_EQ("/data/misc_ce/0/sdksandbox",
+              create_data_misc_sdk_sandbox_path(nullptr, /*isCeData=*/true, 0));
+    EXPECT_EQ("/data/misc_ce/10/sdksandbox", create_data_misc_sdk_sandbox_path(nullptr, true, 10));
+
+    EXPECT_EQ("/data/misc_ce/0/sdksandbox/com.foo",
+              create_data_misc_sdk_sandbox_package_path(nullptr, true, 0, "com.foo"));
+    EXPECT_EQ("/data/misc_ce/10/sdksandbox/com.foo",
+              create_data_misc_sdk_sandbox_package_path(nullptr, true, 10, "com.foo"));
+
+    EXPECT_EQ("/data/misc_ce/0/sdksandbox/com.foo/shared",
+              create_data_misc_sdk_sandbox_sdk_path(nullptr, true, 0, "com.foo", "shared"));
+    EXPECT_EQ("/data/misc_ce/10/sdksandbox/com.foo/shared",
+              create_data_misc_sdk_sandbox_sdk_path(nullptr, true, 10, "com.foo", "shared"));
+    EXPECT_EQ("/data/misc_ce/10/sdksandbox/com.foo/bar@random",
+              create_data_misc_sdk_sandbox_sdk_path(nullptr, true, 10, "com.foo", "bar@random"));
+
+    // De data paths
+    EXPECT_EQ("/data/misc_de/0/sdksandbox",
+              create_data_misc_sdk_sandbox_path(nullptr, /*isCeData=*/false, 0));
+    EXPECT_EQ("/data/misc_de/10/sdksandbox", create_data_misc_sdk_sandbox_path(nullptr, false, 10));
+
+    EXPECT_EQ("/data/misc_de/0/sdksandbox/com.foo",
+              create_data_misc_sdk_sandbox_package_path(nullptr, false, 0, "com.foo"));
+    EXPECT_EQ("/data/misc_de/10/sdksandbox/com.foo",
+              create_data_misc_sdk_sandbox_package_path(nullptr, false, 10, "com.foo"));
+
+    EXPECT_EQ("/data/misc_de/0/sdksandbox/com.foo/shared",
+              create_data_misc_sdk_sandbox_sdk_path(nullptr, false, 0, "com.foo", "shared"));
+    EXPECT_EQ("/data/misc_de/10/sdksandbox/com.foo/shared",
+              create_data_misc_sdk_sandbox_sdk_path(nullptr, false, 10, "com.foo", "shared"));
+    EXPECT_EQ("/data/misc_de/10/sdksandbox/com.foo/bar@random",
+              create_data_misc_sdk_sandbox_sdk_path(nullptr, false, 10, "com.foo", "bar@random"));
+}
+
+TEST_F(UtilsTest, WaitChild) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* child */
+        // Do nothing.
+        _exit(0);
+    }
+    /* parent */
+    int return_code = wait_child_with_timeout(pid, /*timeout_ms=*/100);
+    EXPECT_TRUE(WIFEXITED(return_code));
+    EXPECT_EQ(WEXITSTATUS(return_code), 0);
+}
+
+TEST_F(UtilsTest, WaitChildTimeout) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* child */
+        sleep(1);
+        _exit(0);
+    }
+    /* parent */
+    int return_code = wait_child_with_timeout(pid, /*timeout_ms=*/1);
+    EXPECT_FALSE(WIFEXITED(return_code));
+    EXPECT_EQ(WTERMSIG(return_code), SIGKILL);
+}
+
+TEST_F(UtilsTest, RemoveFileAtFd) {
+    std::string filename = "/data/local/tmp/tempfile-XXXXXX";
+    int fd = mkstemp(filename.data());
+    ASSERT_GE(fd, 0);
+    ASSERT_EQ(access(filename.c_str(), F_OK), 0);
+
+    std::string actual_filename;
+    remove_file_at_fd(fd, &actual_filename);
+    EXPECT_NE(access(filename.c_str(), F_OK), 0);
+    EXPECT_EQ(filename, actual_filename);
+
+    close(fd);
 }
 
 }  // namespace installd

@@ -3,16 +3,13 @@ service servicemanager /system/bin/servicemanager
     user system
     group system readproc
     critical
-    onrestart restart healthd
-    onrestart restart zygote
+    file /dev/kmsg w
+    onrestart setprop servicemanager.ready false
+    onrestart restart --only-if-running apexd
     onrestart restart audioserver
-    onrestart restart media
-    onrestart restart surfaceflinger
-    onrestart restart inputflinger
-    onrestart restart drm
-    onrestart restart cameraserver
-    onrestart restart keystore
     onrestart restart gatekeeperd
-    onrestart restart thermalservice
-    writepid /dev/cpuset/system-background/tasks
+    onrestart class_restart --only-enabled main
+    onrestart class_restart --only-enabled hal
+    onrestart class_restart --only-enabled early_hal
+    task_profiles ServiceCapacityLow
     shutdown critical

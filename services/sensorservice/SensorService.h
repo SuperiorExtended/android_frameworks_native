@@ -20,12 +20,17 @@
 #include "SensorList.h"
 #include "RecentEventLogger.h"
 
+#include <android-base/macros.h>
+#include <binder/AppOpsManager.h>
 #include <binder/BinderService.h>
 #include <binder/IUidObserver.h>
 #include <cutils/compiler.h>
+#include <cutils/multiuser.h>
+#include <private/android_filesystem_config.h>
 #include <sensor/ISensorServer.h>
 #include <sensor/ISensorEventConnection.h>
 #include <sensor/Sensor.h>
+#include "android/hardware/BnSensorPrivacyListener.h"
 
 #include <utils/AndroidThreads.h>
 #include <utils/KeyedVector.h>
@@ -37,8 +42,10 @@
 
 #include <stdint.h>
 #include <sys/types.h>
+#include <queue>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #if __clang__
 // Clang warns about SensorEventConnection::dump hiding BBinder::dump. The cause isn't fixable
@@ -54,7 +61,16 @@
 // For older HALs which don't support batching, use a smaller socket buffer size.
 #define SOCKET_BUFFER_SIZE_NON_BATCHED (4 * 1024)
 
-#define SENSOR_REGISTRATIONS_BUF_SIZE 200
+#define SENSOR_REGISTRATIONS_BUF_SIZE 500
+
+// Apps that targets S+ and do not have HIGH_SAMPLING_RATE_SENSORS permission will be capped
+// at 200 Hz. The cap also applies to all requests when the mic toggle is flipped to on, regardless
+// of their target SDKs and permission.
+// Capped sampling periods for apps that have non-direct sensor connections.
+#define SENSOR_SERVICE_CAPPED_SAMPLING_PERIOD_NS (5 * 1000 * 1000)
+// Capped sampling rate level for apps that have direct sensor connections.
+// The enum SENSOR_DIRECT_RATE_NORMAL corresponds to a rate value of at most 110 Hz.
+#define SENSOR_SERVICE_CAPPED_SAMPLING_RATE_LEVEL SENSOR_DIRECT_RATE_NORMAL
 
 namespace android {
 // ---------------------------------------------------------------------------
@@ -70,8 +86,90 @@ class SensorService :
     class SensorDirectConnection;
 
 public:
+    enum UidState {
+      UID_STATE_ACTIVE = 0,
+      UID_STATE_IDLE,
+    };
+
+    enum Mode {
+       // The regular operating mode where any application can register/unregister/call flush on
+       // sensors.
+       NORMAL = 0,
+       // This mode is only used for testing purposes. Not all HALs support this mode. In this mode,
+       // the HAL ignores the sensor data provided by physical sensors and accepts the data that is
+       // injected from the SensorService as if it were the real sensor data. This mode is primarily
+       // used for testing various algorithms like vendor provided SensorFusion, Step Counter and
+       // Step Detector etc. Typically in this mode, there will be a client (a
+       // SensorEventConnection) which will be injecting sensor data into the HAL. Normal apps can
+       // unregister and register for any sensor that supports injection. Registering to sensors
+       // that do not support injection will give an error.
+       DATA_INJECTION = 1,
+       // This mode is used only for testing sensors. Each sensor can be tested in isolation with
+       // the required sampling_rate and maxReportLatency parameters without having to think about
+       // the data rates requested by other applications. End user devices are always expected to be
+       // in NORMAL mode. When this mode is first activated, all active sensors from all connections
+       // are disabled. Calling flush() will return an error. In this mode, only the requests from
+       // selected apps whose package names are allowlisted are allowed (typically CTS apps).  Only
+       // these apps can register/unregister/call flush() on sensors. If SensorService switches to
+       // NORMAL mode again, all sensors that were previously registered to are activated with the
+       // corresponding parameters if the application hasn't unregistered for sensors in the mean
+       // time.  NOTE: Non allowlisted app whose sensors were previously deactivated may still
+       // receive events if a allowlisted app requests data from the same sensor.
+       RESTRICTED = 2,
+       // Mostly equivalent to DATA_INJECTION with the difference being that the injected data is
+       // delivered to all requesting apps rather than just the package allowed to inject data.
+       // This mode is only allowed to be used on development builds.
+       REPLAY_DATA_INJECTION = 3,
+
+      // State Transitions supported.
+      //     RESTRICTED   <---  NORMAL   ---> DATA_INJECTION/REPLAY_DATA_INJECTION
+      //                  --->           <---
+
+      // Shell commands to switch modes in SensorService.
+      // 1) Put SensorService in RESTRICTED mode with packageName .cts. If it is already in
+      // restricted mode it is treated as a NO_OP (and packageName is NOT changed).
+      //
+      //     $ adb shell dumpsys sensorservice restrict .cts.
+      //
+      // 2) Put SensorService in DATA_INJECTION mode with packageName .xts. If it is already in
+      // data_injection mode it is treated as a NO_OP (and packageName is NOT changed).
+      //
+      //     $ adb shell dumpsys sensorservice data_injection .xts.
+      //
+      // 3) Reset sensorservice back to NORMAL mode.
+      //     $ adb shell dumpsys sensorservice enable
+    };
+
+    class ProximityActiveListener : public virtual RefBase {
+    public:
+        // Note that the callback is invoked from an async thread and can interact with the
+        // SensorService directly.
+        virtual void onProximityActive(bool isActive) = 0;
+    };
+
+    class RuntimeSensorCallback : public virtual RefBase {
+    public:
+        // Note that the callback is invoked from an async thread and can interact with the
+        // SensorService directly.
+        virtual status_t onConfigurationChanged(int handle, bool enabled,
+                                                int64_t samplingPeriodNanos,
+                                                int64_t batchReportLatencyNanos) = 0;
+        virtual int onDirectChannelCreated(int fd) = 0;
+        virtual void onDirectChannelDestroyed(int channelHandle) = 0;
+        virtual int onDirectChannelConfigured(int channelHandle, int sensorHandle,
+                                              int rateLevel) = 0;
+    };
+
+    static char const* getServiceName() ANDROID_API { return "sensorservice"; }
+    SensorService() ANDROID_API;
+
     void cleanupConnection(SensorEventConnection* connection);
     void cleanupConnection(SensorDirectConnection* c);
+
+    // Call with mLock held.
+    void checkAndReportProxStateChangeLocked();
+    void notifyProximityStateLocked(const bool isActive,
+                                    const std::vector<sp<ProximityActiveListener>>& listeners);
 
     status_t enable(const sp<SensorEventConnection>& connection, int handle,
                     nsecs_t samplingPeriodNs,  nsecs_t maxBatchReportLatencyNs, int reservedFlags,
@@ -85,6 +183,19 @@ public:
     status_t flushSensor(const sp<SensorEventConnection>& connection,
                          const String16& opPackageName);
 
+    status_t addProximityActiveListener(const sp<ProximityActiveListener>& callback) ANDROID_API;
+    status_t removeProximityActiveListener(const sp<ProximityActiveListener>& callback) ANDROID_API;
+
+    int registerRuntimeSensor(const sensor_t& sensor, int deviceId,
+                              sp<RuntimeSensorCallback> callback) ANDROID_API;
+    status_t unregisterRuntimeSensor(int handle) ANDROID_API;
+    status_t sendRuntimeSensorEvent(const sensors_event_t& event) ANDROID_API;
+
+    int configureRuntimeSensorDirectChannel(int sensorHandle, const SensorDirectConnection* c,
+                                            const sensors_direct_cfg_t* config);
+
+    // Returns true if a sensor should be throttled according to our rate-throttling rules.
+    static bool isSensorInCappedSet(int sensorType);
 
     virtual status_t shellCommand(int in, int out, int err, Vector<String16>& args);
 
@@ -92,9 +203,66 @@ private:
     friend class BinderService<SensorService>;
 
     // nested class/struct for internal use
-    class SensorRecord;
+    class ConnectionSafeAutolock;
+    class SensorConnectionHolder;
     class SensorEventAckReceiver;
+    class SensorRecord;
     class SensorRegistrationInfo;
+
+    // Promoting a SensorEventConnection or SensorDirectConnection from wp to sp must be done with
+    // mLock held, but destroying that sp must be done unlocked to avoid a race condition that
+    // causes a deadlock (remote dies while we hold a local sp, then our decStrong() call invokes
+    // the dtor -> cleanupConnection() tries to re-lock the mutex). This class ensures safe usage
+    // by wrapping a Mutex::Autolock on SensorService's mLock, plus vectors that hold promoted sp<>
+    // references until the lock is released, when they are safely destroyed.
+    // All read accesses to the connection lists in mConnectionHolder must be done via this class.
+    class ConnectionSafeAutolock final {
+    public:
+        // Returns a list of non-null promoted connection references
+        const std::vector<sp<SensorEventConnection>>& getActiveConnections();
+        const std::vector<sp<SensorDirectConnection>>& getDirectConnections();
+
+    private:
+        // Constructed via SensorConnectionHolder::lock()
+        friend class SensorConnectionHolder;
+        explicit ConnectionSafeAutolock(SensorConnectionHolder& holder, Mutex& mutex);
+        DISALLOW_IMPLICIT_CONSTRUCTORS(ConnectionSafeAutolock);
+
+        // NOTE: Order of these members is important, as the destructor for non-static members
+        // get invoked in the reverse order of their declaration. Here we are relying on the
+        // Autolock to be destroyed *before* the vectors, so the sp<> objects are destroyed without
+        // the lock held, which avoids the deadlock.
+        SensorConnectionHolder& mConnectionHolder;
+        std::vector<std::vector<sp<SensorEventConnection>>> mReferencedActiveConnections;
+        std::vector<std::vector<sp<SensorDirectConnection>>> mReferencedDirectConnections;
+        Mutex::Autolock mAutolock;
+
+        template<typename ConnectionType>
+        const std::vector<sp<ConnectionType>>& getConnectionsHelper(
+                const SortedVector<wp<ConnectionType>>& connectionList,
+                std::vector<std::vector<sp<ConnectionType>>>* referenceHolder);
+    };
+
+    // Encapsulates the collection of active SensorEventConection and SensorDirectConnection
+    // references. Write access is done through this class with mLock held, but all read access
+    // must be routed through ConnectionSafeAutolock.
+    class SensorConnectionHolder {
+    public:
+        void addEventConnectionIfNotPresent(const sp<SensorEventConnection>& connection);
+        void removeEventConnection(const wp<SensorEventConnection>& connection);
+
+        void addDirectConnection(const sp<SensorDirectConnection>& connection);
+        void removeDirectConnection(const wp<SensorDirectConnection>& connection);
+
+        // Pass in the mutex that protects this connection holder; acquires the lock and returns an
+        // object that can be used to safely read the lists of connections
+        ConnectionSafeAutolock lock(Mutex& mutex);
+
+    private:
+        friend class ConnectionSafeAutolock;
+        SortedVector< wp<SensorEventConnection> > mActiveConnections;
+        SortedVector< wp<SensorDirectConnection> > mDirectConnections;
+    };
 
     // If accessing a sensor we need to make sure the UID has access to it. If
     // the app UID is idle then it cannot access sensors and gets no trigger
@@ -114,9 +282,13 @@ private:
 
             bool isUidActive(uid_t uid);
 
-            void onUidGone(uid_t uid, bool disabled);
-            void onUidActive(uid_t uid);
-            void onUidIdle(uid_t uid, bool disabled);
+            void onUidGone(uid_t uid, bool disabled) override;
+            void onUidActive(uid_t uid) override;
+            void onUidIdle(uid_t uid, bool disabled) override;
+            void onUidStateChanged(uid_t uid __unused, int32_t procState __unused,
+                                   int64_t procStateSeq __unused,
+                                   int32_t capability __unused) override {}
+            void onUidProcAdjChanged(uid_t uid __unused, int32_t adj __unused) override {}
 
             void addOverrideUid(uid_t uid, bool active);
             void removeOverrideUid(uid_t uid);
@@ -130,55 +302,65 @@ private:
             std::unordered_map<uid_t, bool> mOverrideUids;
     };
 
-    enum Mode {
-       // The regular operating mode where any application can register/unregister/call flush on
-       // sensors.
-       NORMAL = 0,
-       // This mode is only used for testing purposes. Not all HALs support this mode. In this mode,
-       // the HAL ignores the sensor data provided by physical sensors and accepts the data that is
-       // injected from the SensorService as if it were the real sensor data. This mode is primarily
-       // used for testing various algorithms like vendor provided SensorFusion, Step Counter and
-       // Step Detector etc. Typically in this mode, there will be a client (a
-       // SensorEventConnection) which will be injecting sensor data into the HAL. Normal apps can
-       // unregister and register for any sensor that supports injection. Registering to sensors
-       // that do not support injection will give an error.  TODO(aakella) : Allow exactly one
-       // client to inject sensor data at a time.
-       DATA_INJECTION = 1,
-       // This mode is used only for testing sensors. Each sensor can be tested in isolation with
-       // the required sampling_rate and maxReportLatency parameters without having to think about
-       // the data rates requested by other applications. End user devices are always expected to be
-       // in NORMAL mode. When this mode is first activated, all active sensors from all connections
-       // are disabled. Calling flush() will return an error. In this mode, only the requests from
-       // selected apps whose package names are whitelisted are allowed (typically CTS apps).  Only
-       // these apps can register/unregister/call flush() on sensors. If SensorService switches to
-       // NORMAL mode again, all sensors that were previously registered to are activated with the
-       // corresponding paramaters if the application hasn't unregistered for sensors in the mean
-       // time.  NOTE: Non whitelisted app whose sensors were previously deactivated may still
-       // receive events if a whitelisted app requests data from the same sensor.
-       RESTRICTED = 2
+    bool isUidActive(uid_t uid);
 
-      // State Transitions supported.
-      //     RESTRICTED   <---  NORMAL   ---> DATA_INJECTION
-      //                  --->           <---
+    // Sensor privacy allows a user to disable access to all sensors on the device. When
+    // enabled sensor privacy will prevent all apps, including active apps, from accessing
+    // sensors, they will not receive trigger nor on-change events, flush event behavior
+    // does not change, and recurring events are the same as the first one delivered when
+    // sensor privacy was enabled. All sensor direct connections will be stopped as well
+    // and new direct connections will not be allowed while sensor privacy is enabled.
+    // Once sensor privacy is disabled access to sensors will be restored for active
+    // apps, previously stopped direct connections will be restarted, and new direct
+    // connections will be allowed again.
+    class SensorPrivacyPolicy : public hardware::BnSensorPrivacyListener {
+        public:
+            explicit SensorPrivacyPolicy(wp<SensorService> service)
+                    : mService(service) {}
+            void registerSelf();
+            void unregisterSelf();
 
-      // Shell commands to switch modes in SensorService.
-      // 1) Put SensorService in RESTRICTED mode with packageName .cts. If it is already in
-      // restricted mode it is treated as a NO_OP (and packageName is NOT changed).
-      //
-      //     $ adb shell dumpsys sensorservice restrict .cts.
-      //
-      // 2) Put SensorService in DATA_INJECTION mode with packageName .xts. If it is already in
-      // data_injection mode it is treated as a NO_OP (and packageName is NOT changed).
-      //
-      //     $ adb shell dumpsys sensorservice data_injection .xts.
-      //
-      // 3) Reset sensorservice back to NORMAL mode.
-      //     $ adb shell dumpsys sensorservice enable
+            bool isSensorPrivacyEnabled();
+
+            binder::Status onSensorPrivacyChanged(int toggleType, int sensor,
+                                                  bool enabled);
+
+        protected:
+            std::atomic_bool mSensorPrivacyEnabled;
+            wp<SensorService> mService;
+
+        private:
+            Mutex mSensorPrivacyLock;
+    };
+
+    class MicrophonePrivacyPolicy : public SensorPrivacyPolicy {
+        public:
+            explicit MicrophonePrivacyPolicy(wp<SensorService> service)
+                    : SensorPrivacyPolicy(service) {}
+            void registerSelf();
+            void unregisterSelf();
+
+            binder::Status onSensorPrivacyChanged(int toggleType, int sensor,
+                                                  bool enabled);
+    };
+
+    // A class automatically clearing and restoring binder caller identity inside
+    // a code block (scoped variable).
+    // Declare one systematically before calling SensorPrivacyManager methods so that they are
+    // executed with the same level of privilege as the SensorService process.
+    class AutoCallerClear {
+        public:
+            AutoCallerClear() :
+                mToken(IPCThreadState::self()->clearCallingIdentity()) {}
+            ~AutoCallerClear() {
+                IPCThreadState::self()->restoreCallingIdentity(mToken);
+            }
+
+        private:
+            const int64_t mToken;
     };
 
     static const char* WAKE_LOCK_NAME;
-    static char const* getServiceName() ANDROID_API { return "sensorservice"; }
-    SensorService() ANDROID_API;
     virtual ~SensorService();
 
     virtual void onFirstRef();
@@ -189,37 +371,51 @@ private:
     // ISensorServer interface
     virtual Vector<Sensor> getSensorList(const String16& opPackageName);
     virtual Vector<Sensor> getDynamicSensorList(const String16& opPackageName);
+    virtual Vector<Sensor> getRuntimeSensorList(const String16& opPackageName, int deviceId);
     virtual sp<ISensorEventConnection> createSensorEventConnection(
             const String8& packageName,
-            int requestedMode, const String16& opPackageName);
+            int requestedMode, const String16& opPackageName, const String16& attributionTag);
     virtual int isDataInjectionEnabled();
     virtual sp<ISensorEventConnection> createSensorDirectConnection(const String16& opPackageName,
-            uint32_t size, int32_t type, int32_t format, const native_handle *resource);
+            int deviceId, uint32_t size, int32_t type, int32_t format,
+            const native_handle *resource);
     virtual int setOperationParameter(
             int32_t handle, int32_t type, const Vector<float> &floats, const Vector<int32_t> &ints);
     virtual status_t dump(int fd, const Vector<String16>& args);
+
+    status_t dumpProtoLocked(int fd, ConnectionSafeAutolock* connLock) const;
     String8 getSensorName(int handle) const;
+    String8 getSensorStringType(int handle) const;
     bool isVirtualSensor(int handle) const;
-    sp<SensorInterface> getSensorInterfaceFromHandle(int handle) const;
+    std::shared_ptr<SensorInterface> getSensorInterfaceFromHandle(int handle) const;
+    int getDeviceIdFromHandle(int handle) const;
     bool isWakeUpSensor(int type) const;
     void recordLastValueLocked(sensors_event_t const* buffer, size_t count);
     static void sortEventBuffer(sensors_event_t* buffer, size_t count);
-    const Sensor& registerSensor(SensorInterface* sensor,
-                                 bool isDebug = false, bool isVirtual = false);
-    const Sensor& registerVirtualSensor(SensorInterface* sensor, bool isDebug = false);
-    const Sensor& registerDynamicSensorLocked(SensorInterface* sensor, bool isDebug = false);
+    bool registerSensor(std::shared_ptr<SensorInterface> sensor, bool isDebug = false,
+                        bool isVirtual = false, int deviceId = RuntimeSensor::DEFAULT_DEVICE_ID);
+    bool registerVirtualSensor(std::shared_ptr<SensorInterface> sensor, bool isDebug = false);
+    bool registerDynamicSensorLocked(std::shared_ptr<SensorInterface> sensor, bool isDebug = false);
     bool unregisterDynamicSensorLocked(int handle);
     status_t cleanupWithoutDisable(const sp<SensorEventConnection>& connection, int handle);
     status_t cleanupWithoutDisableLocked(const sp<SensorEventConnection>& connection, int handle);
     void cleanupAutoDisabledSensorLocked(const sp<SensorEventConnection>& connection,
             sensors_event_t const* buffer, const int count);
-    static bool canAccessSensor(const Sensor& sensor, const char* operation,
+    bool canAccessSensor(const Sensor& sensor, const char* operation,
             const String16& opPackageName);
+    void addSensorIfAccessible(const String16& opPackageName, const Sensor& sensor,
+            Vector<Sensor>& accessibleSensorList);
+    static bool hasPermissionForSensor(const Sensor& sensor);
+    static int getTargetSdkVersion(const String16& opPackageName);
+    static void resetTargetSdkVersionCache(const String16& opPackageName);
+    // Checks if the provided target operating mode is valid and returns the enum if it is.
+    static bool getTargetOperatingMode(const std::string &inputString, Mode *targetModeOut);
+    status_t changeOperatingMode(const Vector<String16>& args, Mode targetOperatingMode);
     // SensorService acquires a partial wakelock for delivering events from wake up sensors. This
     // method checks whether all the events from these wake up sensors have been delivered to the
     // corresponding applications, if yes the wakelock is released.
     void checkWakeLockState();
-    void checkWakeLockStateLocked();
+    void checkWakeLockStateLocked(ConnectionSafeAutolock* connLock);
     bool isWakeLockAcquired();
     bool isWakeUpSensorEvent(const sensors_event_t& event) const;
 
@@ -237,15 +433,22 @@ private:
     // Send events from the event cache for this particular connection.
     void sendEventsFromCache(const sp<SensorEventConnection>& connection);
 
-    // Promote all weak referecences in mActiveConnections vector to strong references and add them
-    // to the output vector.
-    void populateActiveConnections( SortedVector< sp<SensorEventConnection> >* activeConnections);
-
     // If SensorService is operating in RESTRICTED mode, only select whitelisted packages are
     // allowed to register for or call flush on sensors. Typically only cts test packages are
     // allowed.
-    bool isWhiteListedPackage(const String8& packageName);
-    bool isOperationRestricted(const String16& opPackageName);
+    bool isAllowListedPackage(const String8& packageName);
+
+    // Returns true if a connection with the specified opPackageName has no access to sensors
+    // in the RESTRICTED mode (i.e. the service is in RESTRICTED mode, and the package is not
+    // whitelisted). mLock must be held to invoke this method.
+    bool isOperationRestrictedLocked(const String16& opPackageName);
+
+    status_t adjustSamplingPeriodBasedOnMicAndPermission(nsecs_t* requestedPeriodNs,
+                                                    const String16& opPackageName);
+    status_t adjustRateLevelBasedOnMicAndPermission(int* requestedRateLevel,
+                                              const String16& opPackageName);
+    bool isRateCappedBasedOnPermission(const String16& opPackageName);
+    bool isPackageDebuggable(const String16& opPackageName);
 
     // Reset the state of SensorService to NORMAL mode.
     status_t resetToNormalMode();
@@ -262,7 +465,13 @@ private:
     void enableSchedFifoMode();
 
     // Sets whether the given UID can get sensor data
-    void setSensorAccess(uid_t uid, bool hasAccess);
+    void onUidStateChanged(uid_t uid, UidState state);
+
+    // Returns true if a connection with the given uid and opPackageName
+    // currently has access to sensors.
+    bool hasSensorAccess(uid_t uid, const String16& opPackageName);
+    // Same as hasSensorAccess but with mLock held.
+    bool hasSensorAccessLocked(uid_t uid, const String16& opPackageName);
 
     // Overrides the UID state as if it is idle
     status_t handleSetUidState(Vector<String16>& args, int err);
@@ -273,8 +482,27 @@ private:
     // Prints the shell command help
     status_t printHelp(int out);
 
+    // temporarily stops all active direct connections and disables all sensors
+    void disableAllSensors();
+    void disableAllSensorsLocked(ConnectionSafeAutolock* connLock);
+    // restarts the previously stopped direct connections and enables all sensors
+    void enableAllSensors();
+    void enableAllSensorsLocked(ConnectionSafeAutolock* connLock);
+
+    // Caps active direct connections (when the mic toggle is flipped to on)
+    void capRates();
+    // Removes the capped rate on active direct connections (when the mic toggle is flipped to off)
+    void uncapRates();
+
+    static inline bool isAudioServerOrSystemServerUid(uid_t uid) {
+        return multiuser_get_app_id(uid) == AID_SYSTEM || uid == AID_AUDIOSERVER;
+    }
+
     static uint8_t sHmacGlobalKey[128];
     static bool sHmacGlobalKeyIsValid;
+
+    static std::atomic_uint64_t curProxCallbackSeq;
+    static std::atomic_uint64_t completedCallbackSeq;
 
     SensorServiceUtil::SensorList mSensors;
     status_t mInitCheck;
@@ -289,24 +517,46 @@ private:
     mutable Mutex mLock;
     DefaultKeyedVector<int, SensorRecord*> mActiveSensors;
     std::unordered_set<int> mActiveVirtualSensors;
-    SortedVector< wp<SensorEventConnection> > mActiveConnections;
+    SensorConnectionHolder mConnectionHolder;
     bool mWakeLockAcquired;
     sensors_event_t *mSensorEventBuffer, *mSensorEventScratch;
+    // WARNING: these SensorEventConnection instances must not be promoted to sp, except via
+    // modification to add support for them in ConnectionSafeAutolock
     wp<const SensorEventConnection> * mMapFlushEventsToConnections;
     std::unordered_map<int, SensorServiceUtil::RecentEventLogger*> mRecentEvent;
-    SortedVector< wp<SensorDirectConnection> > mDirectConnections;
     Mode mCurrentOperatingMode;
+    std::queue<sensors_event_t> mRuntimeSensorEventQueue;
+    std::unordered_map</*deviceId*/int, sp<RuntimeSensorCallback>> mRuntimeSensorCallbacks;
+
+    // true if the head tracker sensor type is currently restricted to system usage only
+    // (can only be unrestricted for testing, via shell cmd)
+    bool mHtRestricted = true;
 
     // This packagaName is set when SensorService is in RESTRICTED or DATA_INJECTION mode. Only
     // applications with this packageName are allowed to activate/deactivate or call flush on
     // sensors. To run CTS this is can be set to ".cts." and only CTS tests will get access to
     // sensors.
-    String8 mWhiteListedPackage;
+    String8 mAllowListedPackage;
 
     int mNextSensorRegIndex;
     Vector<SensorRegistrationInfo> mLastNSensorRegistrations;
 
     sp<UidPolicy> mUidPolicy;
+    sp<SensorPrivacyPolicy> mSensorPrivacyPolicy;
+
+    static AppOpsManager sAppOpsManager;
+    static std::map<String16, int> sPackageTargetVersion;
+    static Mutex sPackageTargetVersionLock;
+    static String16 sSensorInterfaceDescriptorPrefix;
+
+    sp<MicrophonePrivacyPolicy> mMicSensorPrivacyPolicy;
+
+    // Keeps track of the handles of all proximity sensors in the system.
+    std::vector<int32_t> mProxSensorHandles;
+    // The last proximity sensor active state reported to listeners.
+    bool mLastReportedProxIsActive;
+    // Listeners subscribed to receive updates on the proximity sensor active state.
+    std::vector<sp<ProximityActiveListener>> mProximityActiveListeners;
 };
 
 } // namespace android

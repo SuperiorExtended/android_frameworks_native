@@ -21,17 +21,23 @@
 // There are a few of them requiring manual code for things such as layer
 // discovery or chaining.  They call into functions defined in this file.
 
+#define ATRACE_TAG ATRACE_TAG_GRAPHICS
+
 #include <stdlib.h>
 #include <string.h>
 
 #include <algorithm>
 #include <mutex>
 #include <new>
+#include <string>
+#include <unordered_set>
 #include <utility>
 
+#include <android-base/properties.h>
 #include <android-base/strings.h>
 #include <cutils/properties.h>
 #include <log/log.h>
+#include <utils/Trace.h>
 
 #include <vulkan/vk_layer_interface.h>
 #include <graphicsenv/GraphicsEnv.h>
@@ -121,7 +127,7 @@ class OverrideLayerNames {
     };
 
     void AddImplicitLayers() {
-        if (!is_instance_ || !driver::Debuggable())
+        if (!is_instance_)
             return;
 
         GetLayersFromSettings();
@@ -129,7 +135,7 @@ class OverrideLayerNames {
         // If no layers specified via Settings, check legacy properties
         if (implicit_layers_.count <= 0) {
             ParseDebugVulkanLayers();
-            property_list(ParseDebugVulkanLayer, this);
+            ParseDebugVulkanLayer();
 
             // sort by priorities
             auto& arr = implicit_layers_;
@@ -141,7 +147,7 @@ class OverrideLayerNames {
     }
 
     void GetLayersFromSettings() {
-        // These will only be available if conditions are met in GraphicsEnvironemnt
+        // These will only be available if conditions are met in GraphicsEnvironment
         // gpu_debug_layers = layer1:layer2:layerN
         const std::string layers = android::GraphicsEnv::getInstance().getDebugLayers();
         if (!layers.empty()) {
@@ -176,30 +182,39 @@ class OverrideLayerNames {
             AddImplicitLayer(prio, p, strlen(p));
     }
 
-    static void ParseDebugVulkanLayer(const char* key,
-                                      const char* val,
-                                      void* user_data) {
+    void ParseDebugVulkanLayer() {
+        // Checks for consecutive debug.vulkan.layer.<priority> system
+        // properties after always checking an initial fixed range.
         static const char prefix[] = "debug.vulkan.layer.";
-        const size_t prefix_len = sizeof(prefix) - 1;
+        static constexpr int kFixedRangeBeginInclusive = 0;
+        static constexpr int kFixedRangeEndInclusive = 9;
 
-        if (strncmp(key, prefix, prefix_len) || val[0] == '\0')
-            return;
-        key += prefix_len;
+        bool logged = false;
 
-        // debug.vulkan.layer.<priority>
-        int priority = -1;
-        if (key[0] >= '0' && key[0] <= '9')
-            priority = atoi(key);
+        int priority = kFixedRangeBeginInclusive;
+        while (true) {
+            const std::string prop_key =
+                std::string(prefix) + std::to_string(priority);
+            const std::string prop_val =
+                android::base::GetProperty(prop_key, "");
 
-        if (priority < 0) {
-            ALOGW("Ignored implicit layer %s with invalid priority %s", val,
-                  key);
-            return;
+            if (!prop_val.empty()) {
+                if (!logged) {
+                    ALOGI(
+                        "Detected Vulkan layers configured with "
+                        "debug.vulkan.layer.<priority>. Checking for "
+                        "debug.vulkan.layer.<priority> in the range [%d, %d] "
+                        "followed by a consecutive scan.",
+                        kFixedRangeBeginInclusive, kFixedRangeEndInclusive);
+                    logged = true;
+                }
+                AddImplicitLayer(priority, prop_val.c_str(), prop_val.length());
+            } else if (priority >= kFixedRangeEndInclusive) {
+                return;
+            }
+
+            ++priority;
         }
-
-        OverrideLayerNames& override_layers =
-            *reinterpret_cast<OverrideLayerNames*>(user_data);
-        override_layers.AddImplicitLayer(priority, val, strlen(val));
     }
 
     void AddImplicitLayer(int priority, const char* name, size_t len) {
@@ -367,7 +382,8 @@ class OverrideExtensionNames {
 
    private:
     bool EnableDebugCallback() const {
-        return (is_instance_ && driver::Debuggable() &&
+        return (is_instance_ &&
+                android::GraphicsEnv::getInstance().isDebuggable() &&
                 property_get_bool("debug.vulkan.enable_callback", false));
     }
 
@@ -516,7 +532,11 @@ LayerChain::LayerChain(bool is_instance,
       get_device_proc_addr_(nullptr),
       driver_extensions_(nullptr),
       driver_extension_count_(0) {
-    enabled_extensions_.set(driver::ProcHook::EXTENSION_CORE);
+    // advertise the loader supported core Vulkan API version at vulkan::api
+    for (uint32_t i = driver::ProcHook::EXTENSION_CORE_1_0;
+         i != driver::ProcHook::EXTENSION_COUNT; ++i) {
+        enabled_extensions_.set(i);
+    }
 }
 
 LayerChain::~LayerChain() {
@@ -657,6 +677,12 @@ VkResult LayerChain::LoadLayer(ActiveLayer& layer, const char* name) {
     new (&layer) ActiveLayer{GetLayerRef(*l), {}};
     if (!layer.ref) {
         ALOGW("Failed to open layer %s", name);
+        layer.ref.~LayerRef();
+        return VK_ERROR_LAYER_NOT_PRESENT;
+    }
+
+    if (!layer.ref.GetGetInstanceProcAddr()) {
+        ALOGW("Failed to locate vkGetInstanceProcAddr in layer %s", name);
         layer.ref.~LayerRef();
         return VK_ERROR_LAYER_NOT_PRESENT;
     }
@@ -939,6 +965,13 @@ VkResult LayerChain::ValidateExtensions(VkPhysicalDevice physical_dev,
     VkResult result = EnumerateDeviceExtensionProperties(physical_dev, nullptr,
                                                          &count, nullptr);
     if (result == VK_SUCCESS && count) {
+        // Work-around a race condition during Android start-up, that can result
+        // in the second call to EnumerateDeviceExtensionProperties having
+        // another extension.  That causes the second call to return
+        // VK_INCOMPLETE.  A work-around is to add 1 to "count" and ask for one
+        // more extension property.  See: http://anglebug.com/6715 and
+        // internal-to-Google b/206733351.
+        count++;
         driver_extensions_ = AllocateDriverExtensionArray(count);
         result = (driver_extensions_)
                      ? EnumerateDeviceExtensionProperties(
@@ -1158,17 +1191,38 @@ const LayerChain::ActiveLayer* LayerChain::GetActiveLayers(
 // ----------------------------------------------------------------------------
 
 bool EnsureInitialized() {
-    static std::once_flag once_flag;
-    static bool initialized;
+    static bool initialized = false;
+    static pid_t init_attempted_for_pid = 0;
+    static std::mutex init_lock;
 
-    std::call_once(once_flag, []() {
-        if (driver::OpenHAL()) {
-            DiscoverLayers();
-            initialized = true;
-        }
-    });
+    std::lock_guard<std::mutex> lock(init_lock);
+    if (init_attempted_for_pid == getpid())
+        return initialized;
+
+    init_attempted_for_pid = getpid();
+    if (driver::OpenHAL()) {
+        DiscoverLayers();
+        initialized = true;
+    }
 
     return initialized;
+}
+
+template <typename Functor>
+void ForEachLayerFromSettings(Functor functor) {
+    const std::string layersSetting =
+        android::GraphicsEnv::getInstance().getDebugLayers();
+    if (!layersSetting.empty()) {
+        std::vector<std::string> layers =
+            android::base::Split(layersSetting, ":");
+        for (uint32_t i = 0; i < layers.size(); i++) {
+            const Layer* layer = FindLayer(layers[i].c_str());
+            if (!layer) {
+                continue;
+            }
+            functor(layer);
+        }
+    }
 }
 
 }  // anonymous namespace
@@ -1176,6 +1230,8 @@ bool EnsureInitialized() {
 VkResult CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
                         const VkAllocationCallbacks* pAllocator,
                         VkInstance* pInstance) {
+    ATRACE_CALL();
+
     if (!EnsureInitialized())
         return VK_ERROR_INITIALIZATION_FAILED;
 
@@ -1184,6 +1240,8 @@ VkResult CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
 
 void DestroyInstance(VkInstance instance,
                      const VkAllocationCallbacks* pAllocator) {
+    ATRACE_CALL();
+
     if (instance != VK_NULL_HANDLE)
         LayerChain::DestroyInstance(instance, pAllocator);
 }
@@ -1192,19 +1250,25 @@ VkResult CreateDevice(VkPhysicalDevice physicalDevice,
                       const VkDeviceCreateInfo* pCreateInfo,
                       const VkAllocationCallbacks* pAllocator,
                       VkDevice* pDevice) {
+    ATRACE_CALL();
+
     return LayerChain::CreateDevice(physicalDevice, pCreateInfo, pAllocator,
                                     pDevice);
 }
 
 void DestroyDevice(VkDevice device, const VkAllocationCallbacks* pAllocator) {
+    ATRACE_CALL();
+
     if (device != VK_NULL_HANDLE)
         LayerChain::DestroyDevice(device, pAllocator);
 }
 
 VkResult EnumerateInstanceLayerProperties(uint32_t* pPropertyCount,
                                           VkLayerProperties* pProperties) {
+    ATRACE_CALL();
+
     if (!EnsureInitialized())
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
 
     uint32_t count = GetLayerCount();
 
@@ -1225,8 +1289,10 @@ VkResult EnumerateInstanceExtensionProperties(
     const char* pLayerName,
     uint32_t* pPropertyCount,
     VkExtensionProperties* pProperties) {
+    ATRACE_CALL();
+
     if (!EnsureInitialized())
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
 
     if (pLayerName) {
         const Layer* layer = FindLayer(pLayerName);
@@ -1245,14 +1311,63 @@ VkResult EnumerateInstanceExtensionProperties(
         return *pPropertyCount < count ? VK_INCOMPLETE : VK_SUCCESS;
     }
 
-    // TODO how about extensions from implicitly enabled layers?
-    return vulkan::driver::EnumerateInstanceExtensionProperties(
-        nullptr, pPropertyCount, pProperties);
+    // If the pLayerName is nullptr, we must advertise all instance extensions
+    // from all implicitly enabled layers and the driver implementation. If
+    // there are duplicates among layers and the driver implementation, always
+    // only preserve the top layer closest to the application regardless of the
+    // spec version.
+    std::vector<VkExtensionProperties> properties;
+    std::unordered_set<std::string> extensionNames;
+
+    // Expose extensions from implicitly enabled layers.
+    ForEachLayerFromSettings([&](const Layer* layer) {
+        uint32_t count = 0;
+        const VkExtensionProperties* props =
+            GetLayerInstanceExtensions(*layer, count);
+        if (count > 0) {
+            for (uint32_t i = 0; i < count; ++i) {
+                if (extensionNames.emplace(props[i].extensionName).second) {
+                    properties.push_back(props[i]);
+                }
+            }
+        }
+    });
+
+    // TODO(b/143293104): Parse debug.vulkan.layers properties
+
+    // Expose extensions from driver implementation.
+    {
+        uint32_t count = 0;
+        VkResult result = vulkan::driver::EnumerateInstanceExtensionProperties(
+            nullptr, &count, nullptr);
+        if (result == VK_SUCCESS && count > 0) {
+            std::vector<VkExtensionProperties> props(count);
+            result = vulkan::driver::EnumerateInstanceExtensionProperties(
+                nullptr, &count, props.data());
+            for (auto prop : props) {
+                if (extensionNames.emplace(prop.extensionName).second) {
+                    properties.push_back(prop);
+                }
+            }
+        }
+    }
+
+    uint32_t totalCount = properties.size();
+    if (!pProperties || *pPropertyCount > totalCount) {
+        *pPropertyCount = totalCount;
+    }
+    if (pProperties) {
+        std::copy(properties.data(), properties.data() + *pPropertyCount,
+                  pProperties);
+    }
+    return *pPropertyCount < totalCount ? VK_INCOMPLETE : VK_SUCCESS;
 }
 
 VkResult EnumerateDeviceLayerProperties(VkPhysicalDevice physicalDevice,
                                         uint32_t* pPropertyCount,
                                         VkLayerProperties* pProperties) {
+    ATRACE_CALL();
+
     uint32_t count;
     const LayerChain::ActiveLayer* layers =
         LayerChain::GetActiveLayers(physicalDevice, count);
@@ -1275,6 +1390,8 @@ VkResult EnumerateDeviceExtensionProperties(
     const char* pLayerName,
     uint32_t* pPropertyCount,
     VkExtensionProperties* pProperties) {
+    ATRACE_CALL();
+
     if (pLayerName) {
         // EnumerateDeviceLayerProperties enumerates active layers for
         // backward compatibility.  The extension query here should work for
@@ -1295,14 +1412,68 @@ VkResult EnumerateDeviceExtensionProperties(
         return *pPropertyCount < count ? VK_INCOMPLETE : VK_SUCCESS;
     }
 
-    // TODO how about extensions from implicitly enabled layers?
-    const InstanceData& data = GetData(physicalDevice);
-    return data.dispatch.EnumerateDeviceExtensionProperties(
-        physicalDevice, nullptr, pPropertyCount, pProperties);
+    // If the pLayerName is nullptr, we must advertise all device extensions
+    // from all implicitly enabled layers and the driver implementation. If
+    // there are duplicates among layers and the driver implementation, always
+    // only preserve the top layer closest to the application regardless of the
+    // spec version.
+    std::vector<VkExtensionProperties> properties;
+    std::unordered_set<std::string> extensionNames;
+
+    // Expose extensions from implicitly enabled layers.
+    ForEachLayerFromSettings([&](const Layer* layer) {
+        uint32_t count = 0;
+        const VkExtensionProperties* props =
+            GetLayerDeviceExtensions(*layer, count);
+        if (count > 0) {
+            for (uint32_t i = 0; i < count; ++i) {
+                if (extensionNames.emplace(props[i].extensionName).second) {
+                    properties.push_back(props[i]);
+                }
+            }
+        }
+    });
+
+    // TODO(b/143293104): Parse debug.vulkan.layers properties
+
+    // Expose extensions from driver implementation.
+    {
+        const InstanceData& data = GetData(physicalDevice);
+        uint32_t count = 0;
+        VkResult result = data.dispatch.EnumerateDeviceExtensionProperties(
+            physicalDevice, nullptr, &count, nullptr);
+        if (result == VK_SUCCESS && count > 0) {
+            std::vector<VkExtensionProperties> props(count);
+            result = data.dispatch.EnumerateDeviceExtensionProperties(
+                physicalDevice, nullptr, &count, props.data());
+            for (auto prop : props) {
+                if (extensionNames.emplace(prop.extensionName).second) {
+                    properties.push_back(prop);
+                }
+            }
+        }
+    }
+
+    uint32_t totalCount = properties.size();
+    if (!pProperties || *pPropertyCount > totalCount) {
+        *pPropertyCount = totalCount;
+    }
+    if (pProperties) {
+        std::copy(properties.data(), properties.data() + *pPropertyCount,
+                  pProperties);
+    }
+    return *pPropertyCount < totalCount ? VK_INCOMPLETE : VK_SUCCESS;
 }
 
 VkResult EnumerateInstanceVersion(uint32_t* pApiVersion) {
-    *pApiVersion = VK_API_VERSION_1_1;
+    ATRACE_CALL();
+
+    // Load the driver here if not done yet. This api will be used in Zygote
+    // for Vulkan driver pre-loading because of the minimum overhead.
+    if (!EnsureInitialized())
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+    *pApiVersion = VK_API_VERSION_1_3;
     return VK_SUCCESS;
 }
 

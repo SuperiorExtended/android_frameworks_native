@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wconversion"
+
 #include <sys/resource.h>
 
 #include <sched.h>
@@ -21,30 +25,36 @@
 #include <android/frameworks/displayservice/1.0/IDisplayService.h>
 #include <android/hardware/configstore/1.0/ISurfaceFlingerConfigs.h>
 #include <android/hardware/graphics/allocator/2.0/IAllocator.h>
+#include <android/hardware/graphics/allocator/3.0/IAllocator.h>
 #include <binder/IPCThreadState.h>
 #include <binder/IServiceManager.h>
 #include <binder/ProcessState.h>
 #include <configstore/Utils.h>
-#include <cutils/sched_policy.h>
 #include <displayservice/DisplayService.h>
+#include <errno.h>
 #include <hidl/LegacySupport.h>
+#include <processgroup/sched_policy.h>
 #include "SurfaceFlinger.h"
 #include "SurfaceFlingerFactory.h"
+#include "SurfaceFlingerProperties.h"
 
 using namespace android;
 
 static status_t startGraphicsAllocatorService() {
     using android::hardware::configstore::getBool;
     using android::hardware::configstore::V1_0::ISurfaceFlingerConfigs;
-    if (!getBool<ISurfaceFlingerConfigs,
-            &ISurfaceFlingerConfigs::startGraphicsAllocatorService>(false)) {
+    if (!android::sysprop::start_graphics_allocator_service(false)) {
         return OK;
     }
 
-    using android::hardware::graphics::allocator::V2_0::IAllocator;
+    status_t result = hardware::registerPassthroughServiceImplementation<
+            android::hardware::graphics::allocator::V3_0::IAllocator>();
+    if (result == OK) {
+        return OK;
+    }
 
-    status_t result =
-        hardware::registerPassthroughServiceImplementation<IAllocator>();
+    result = hardware::registerPassthroughServiceImplementation<
+            android::hardware::graphics::allocator::V2_0::IAllocator>();
     if (result != OK) {
         ALOGE("could not start graphics allocator service");
         return result;
@@ -53,18 +63,17 @@ static status_t startGraphicsAllocatorService() {
     return OK;
 }
 
-static status_t startDisplayService() {
+static void startDisplayService() {
     using android::frameworks::displayservice::V1_0::implementation::DisplayService;
     using android::frameworks::displayservice::V1_0::IDisplayService;
 
-    sp<IDisplayService> displayservice = new DisplayService();
+    sp<IDisplayService> displayservice = sp<DisplayService>::make();
     status_t err = displayservice->registerAsService();
 
+    // b/141930622
     if (err != OK) {
-        ALOGE("Could not register IDisplayService service.");
+        ALOGE("Did not register (deprecated) IDisplayService service.");
     }
-
-    return err;
 }
 
 int main(int, char**) {
@@ -79,21 +88,56 @@ int main(int, char**) {
     // binder threads to 4.
     ProcessState::self()->setThreadPoolMaxThreadCount(4);
 
+    // Set uclamp.min setting on all threads, maybe an overkill but we want
+    // to cover important threads like RenderEngine.
+    if (SurfaceFlinger::setSchedAttr(true) != NO_ERROR) {
+        ALOGW("Failed to set uclamp.min during boot: %s", strerror(errno));
+    }
+
+    // The binder threadpool we start will inherit sched policy and priority
+    // of (this) creating thread. We want the binder thread pool to have
+    // SCHED_FIFO policy and priority 1 (lowest RT priority)
+    // Once the pool is created we reset this thread's priority back to
+    // original.
+    int newPriority = 0;
+    int origPolicy = sched_getscheduler(0);
+    struct sched_param origSchedParam;
+
+    int errorInPriorityModification = sched_getparam(0, &origSchedParam);
+    if (errorInPriorityModification == 0) {
+        int policy = SCHED_FIFO;
+        newPriority = sched_get_priority_min(policy);
+
+        struct sched_param param;
+        param.sched_priority = newPriority;
+
+        errorInPriorityModification = sched_setscheduler(0, policy, &param);
+    }
+
     // start the thread pool
     sp<ProcessState> ps(ProcessState::self());
     ps->startThreadPool();
 
+    // Reset current thread's policy and priority
+    if (errorInPriorityModification == 0) {
+        errorInPriorityModification = sched_setscheduler(0, origPolicy, &origSchedParam);
+    } else {
+        ALOGE("Failed to set SurfaceFlinger binder threadpool priority to SCHED_FIFO");
+    }
+
     // instantiate surfaceflinger
     sp<SurfaceFlinger> flinger = surfaceflinger::createSurfaceFlinger();
+
+    // Set the minimum policy of surfaceflinger node to be SCHED_FIFO.
+    // So any thread with policy/priority lower than {SCHED_FIFO, 1}, will run
+    // at least with SCHED_FIFO policy and priority 1.
+    if (errorInPriorityModification == 0) {
+        flinger->setMinSchedulerPolicy(SCHED_FIFO, newPriority);
+    }
 
     setpriority(PRIO_PROCESS, 0, PRIORITY_URGENT_DISPLAY);
 
     set_sched_policy(0, SP_FOREGROUND);
-
-    // Put most SurfaceFlinger threads in the system-background cpuset
-    // Keeps us from unnecessarily using big cores
-    // Do this after the binder thread pool init
-    if (cpusets_enabled()) set_cpuset_policy(0, SP_SYSTEM);
 
     // initialize before clients can connect
     flinger->init();
@@ -103,12 +147,15 @@ int main(int, char**) {
     sm->addService(String16(SurfaceFlinger::getServiceName()), flinger, false,
                    IServiceManager::DUMP_FLAG_PRIORITY_CRITICAL | IServiceManager::DUMP_FLAG_PROTO);
 
+    // publish gui::ISurfaceComposer, the new AIDL interface
+    sp<SurfaceComposerAIDL> composerAIDL = sp<SurfaceComposerAIDL>::make(flinger);
+    sm->addService(String16("SurfaceFlingerAIDL"), composerAIDL, false,
+                   IServiceManager::DUMP_FLAG_PRIORITY_CRITICAL | IServiceManager::DUMP_FLAG_PROTO);
+
     startDisplayService(); // dependency on SF getting registered above
 
-    struct sched_param param = {0};
-    param.sched_priority = 2;
-    if (sched_setscheduler(0, SCHED_FIFO, &param) != 0) {
-        ALOGE("Couldn't set SCHED_FIFO");
+    if (SurfaceFlinger::setSchedFifo(true) != NO_ERROR) {
+        ALOGW("Failed to set SCHED_FIFO during boot: %s", strerror(errno));
     }
 
     // run surface flinger in this thread
@@ -116,3 +163,6 @@ int main(int, char**) {
 
     return 0;
 }
+
+// TODO(b/129481165): remove the #pragma below and fix conversion issues
+#pragma clang diagnostic pop // ignored "-Wconversion"

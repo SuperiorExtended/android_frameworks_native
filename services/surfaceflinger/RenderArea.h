@@ -4,8 +4,11 @@
 #include <ui/Transform.h>
 
 #include <functional>
+#include "Layer.h"
 
 namespace android {
+
+class DisplayDevice;
 
 // RenderArea describes a rectangular area that layers can be rendered to.
 //
@@ -15,18 +18,36 @@ namespace android {
 // physical render area.
 class RenderArea {
 public:
+    using RotationFlags = ui::Transform::RotationFlags;
+
     enum class CaptureFill {CLEAR, OPAQUE};
 
     static float getCaptureFillValue(CaptureFill captureFill);
 
-    RenderArea(uint32_t reqWidth, uint32_t reqHeight, CaptureFill captureFill,
-               ui::Dataspace reqDataSpace,
-               ui::Transform::orientation_flags rotation = ui::Transform::ROT_0)
-          : mReqWidth(reqWidth),
-            mReqHeight(reqHeight),
+    RenderArea(ui::Size reqSize, CaptureFill captureFill, ui::Dataspace reqDataSpace,
+               bool hintForSeamlessTransition, bool allowSecureLayers = false,
+               RotationFlags rotation = ui::Transform::ROT_0)
+          : mAllowSecureLayers(allowSecureLayers),
+            mReqSize(reqSize),
             mReqDataSpace(reqDataSpace),
             mCaptureFill(captureFill),
-            mRotationFlags(rotation) {}
+            mRotationFlags(rotation),
+            mHintForSeamlessTransition(hintForSeamlessTransition) {}
+
+    static std::function<std::vector<std::pair<Layer*, sp<LayerFE>>>()> fromTraverseLayersLambda(
+            std::function<void(const LayerVector::Visitor&)> traverseLayers) {
+        return [traverseLayers = std::move(traverseLayers)]() {
+            std::vector<std::pair<Layer*, sp<LayerFE>>> layers;
+            traverseLayers([&](Layer* layer) {
+                // Layer::prepareClientComposition uses the layer's snapshot to populate the
+                // resulting LayerSettings. Calling Layer::updateSnapshot ensures that LayerSettings
+                // are generated with the layer's current buffer and geometry.
+                layer->updateSnapshot(true /* updateGeometry */);
+                layers.emplace_back(layer, layer->copyCompositionEngineLayerFE());
+            });
+            return layers;
+        };
+    }
 
     virtual ~RenderArea() = default;
 
@@ -37,51 +58,53 @@ public:
     // blacked out / skipped when rendered to an insecure render area.
     virtual bool isSecure() const = 0;
 
-    // Returns true if the otherwise disabled layer filtering should be
-    // enabled when rendering to this render area.
-    virtual bool needsFiltering() const = 0;
-
     // Returns the transform to be applied on layers to transform them into
     // the logical render area.
     virtual const ui::Transform& getTransform() const = 0;
-
-    // Returns the size of the logical render area.  Layers are clipped to the
-    // logical render area.
-    virtual int getWidth() const = 0;
-    virtual int getHeight() const = 0;
-    virtual Rect getBounds() const = 0;
 
     // Returns the source crop of the render area.  The source crop defines
     // how layers are projected from the logical render area onto the physical
     // render area.  It can be larger than the logical render area.  It can
     // also be optionally rotated.
     //
-    // Layers are first clipped to the source crop (in addition to being
-    // clipped to the logical render area already).  The source crop and the
-    // layers are then rotated around the center of the source crop, and
-    // scaled to the physical render area linearly.
+    // The source crop is specified in layer space (when rendering a layer and
+    // its children), or in layer-stack space (when rendering all layers visible
+    // on the display).
     virtual Rect getSourceCrop() const = 0;
 
     // Returns the rotation of the source crop and the layers.
-    ui::Transform::orientation_flags getRotationFlags() const { return mRotationFlags; };
+    RotationFlags getRotationFlags() const { return mRotationFlags; }
 
     // Returns the size of the physical render area.
-    int getReqWidth() const { return mReqWidth; };
-    int getReqHeight() const { return mReqHeight; };
+    int getReqWidth() const { return mReqSize.width; }
+    int getReqHeight() const { return mReqSize.height; }
 
     // Returns the composition data space of the render area.
     ui::Dataspace getReqDataSpace() const { return mReqDataSpace; }
 
     // Returns the fill color of the physical render area.  Regions not
     // covered by any rendered layer should be filled with this color.
-    CaptureFill getCaptureFill() const { return mCaptureFill; };
+    CaptureFill getCaptureFill() const { return mCaptureFill; }
+
+    virtual sp<const DisplayDevice> getDisplayDevice() const = 0;
+
+    // If this is a LayerRenderArea, return the root layer of the
+    // capture operation.
+    virtual sp<Layer> getParentLayer() const { return nullptr; }
+
+    // Returns whether the render result may be used for system animations that
+    // must preserve the exact colors of the display.
+    bool getHintForSeamlessTransition() const { return mHintForSeamlessTransition; }
+
+protected:
+    const bool mAllowSecureLayers;
 
 private:
-    const uint32_t mReqWidth;
-    const uint32_t mReqHeight;
+    const ui::Size mReqSize;
     const ui::Dataspace mReqDataSpace;
     const CaptureFill mCaptureFill;
-    const ui::Transform::orientation_flags mRotationFlags;
+    const RotationFlags mRotationFlags;
+    const bool mHintForSeamlessTransition;
 };
 
 } // namespace android

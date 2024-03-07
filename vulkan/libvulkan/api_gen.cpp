@@ -16,11 +16,10 @@
 
 // WARNING: This file is generated. See ../README.md for instructions.
 
+#include <log/log.h>
 #include <string.h>
 
 #include <algorithm>
-
-#include <log/log.h>
 
 // to catch mismatches between vulkan.h and this file
 #undef VK_NO_PROTOTYPES
@@ -54,6 +53,11 @@ namespace api {
 namespace {
 
 // clang-format off
+
+VKAPI_ATTR VkResult disabledCreateAndroidSurfaceKHR(VkInstance instance, const VkAndroidSurfaceCreateInfoKHR*, const VkAllocationCallbacks*, VkSurfaceKHR*) {
+    driver::Logger(instance).Err(instance, "VK_KHR_android_surface not enabled. Exported vkCreateAndroidSurfaceKHR not executed.");
+    return VK_SUCCESS;
+}
 
 VKAPI_ATTR void disabledDestroySurfaceKHR(VkInstance instance, VkSurfaceKHR, const VkAllocationCallbacks*) {
     driver::Logger(instance).Err(instance, "VK_KHR_surface not enabled. Exported vkDestroySurfaceKHR not executed.");
@@ -113,18 +117,13 @@ VKAPI_ATTR VkResult disabledGetDeviceGroupSurfacePresentModesKHR(VkDevice device
     return VK_SUCCESS;
 }
 
-VKAPI_ATTR VkResult disabledGetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR, uint32_t*, VkRect2D*) {
-    driver::Logger(physicalDevice).Err(physicalDevice, "VK_KHR_swapchain not enabled. Exported vkGetPhysicalDevicePresentRectanglesKHR not executed.");
-    return VK_SUCCESS;
-}
-
 VKAPI_ATTR VkResult disabledAcquireNextImage2KHR(VkDevice device, const VkAcquireNextImageInfoKHR*, uint32_t*) {
     driver::Logger(device).Err(device, "VK_KHR_swapchain not enabled. Exported vkAcquireNextImage2KHR not executed.");
     return VK_SUCCESS;
 }
 
-VKAPI_ATTR VkResult disabledCreateAndroidSurfaceKHR(VkInstance instance, const VkAndroidSurfaceCreateInfoKHR*, const VkAllocationCallbacks*, VkSurfaceKHR*) {
-    driver::Logger(instance).Err(instance, "VK_KHR_android_surface not enabled. Exported vkCreateAndroidSurfaceKHR not executed.");
+VKAPI_ATTR VkResult disabledGetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR, uint32_t*, VkRect2D*) {
+    driver::Logger(physicalDevice).Err(physicalDevice, "VK_KHR_swapchain not enabled. Exported vkGetPhysicalDevicePresentRectanglesKHR not executed.");
     return VK_SUCCESS;
 }
 
@@ -162,7 +161,12 @@ bool InitDispatchTable(
     INIT_PROC(true, instance, CreateDevice);
     INIT_PROC(true, instance, EnumerateDeviceExtensionProperties);
     INIT_PROC(true, instance, GetPhysicalDeviceSparseImageFormatProperties);
-    INIT_PROC(false, instance, EnumeratePhysicalDeviceGroups);
+    INIT_PROC_EXT(KHR_android_surface, true, instance, CreateAndroidSurfaceKHR);
+    INIT_PROC_EXT(KHR_surface, true, instance, DestroySurfaceKHR);
+    INIT_PROC_EXT(KHR_surface, true, instance, GetPhysicalDeviceSurfaceSupportKHR);
+    INIT_PROC_EXT(KHR_surface, true, instance, GetPhysicalDeviceSurfaceCapabilitiesKHR);
+    INIT_PROC_EXT(KHR_surface, true, instance, GetPhysicalDeviceSurfaceFormatsKHR);
+    INIT_PROC_EXT(KHR_surface, true, instance, GetPhysicalDeviceSurfacePresentModesKHR);
     INIT_PROC(false, instance, GetPhysicalDeviceFeatures2);
     INIT_PROC(false, instance, GetPhysicalDeviceProperties2);
     INIT_PROC(false, instance, GetPhysicalDeviceFormatProperties2);
@@ -171,15 +175,11 @@ bool InitDispatchTable(
     INIT_PROC(false, instance, GetPhysicalDeviceMemoryProperties2);
     INIT_PROC(false, instance, GetPhysicalDeviceSparseImageFormatProperties2);
     INIT_PROC(false, instance, GetPhysicalDeviceExternalBufferProperties);
-    INIT_PROC(false, instance, GetPhysicalDeviceExternalFenceProperties);
     INIT_PROC(false, instance, GetPhysicalDeviceExternalSemaphoreProperties);
-    INIT_PROC_EXT(KHR_surface, true, instance, DestroySurfaceKHR);
-    INIT_PROC_EXT(KHR_surface, true, instance, GetPhysicalDeviceSurfaceSupportKHR);
-    INIT_PROC_EXT(KHR_surface, true, instance, GetPhysicalDeviceSurfaceCapabilitiesKHR);
-    INIT_PROC_EXT(KHR_surface, true, instance, GetPhysicalDeviceSurfaceFormatsKHR);
-    INIT_PROC_EXT(KHR_surface, true, instance, GetPhysicalDeviceSurfacePresentModesKHR);
+    INIT_PROC(false, instance, GetPhysicalDeviceExternalFenceProperties);
+    INIT_PROC(false, instance, EnumeratePhysicalDeviceGroups);
     INIT_PROC_EXT(KHR_swapchain, false, instance, GetPhysicalDevicePresentRectanglesKHR);
-    INIT_PROC_EXT(KHR_android_surface, true, instance, CreateAndroidSurfaceKHR);
+    INIT_PROC(false, instance, GetPhysicalDeviceToolProperties);
     // clang-format on
 
     return success;
@@ -227,6 +227,7 @@ bool InitDispatchTable(
     INIT_PROC(true, dev, CreateQueryPool);
     INIT_PROC(true, dev, DestroyQueryPool);
     INIT_PROC(true, dev, GetQueryPoolResults);
+    INIT_PROC(false, dev, ResetQueryPool);
     INIT_PROC(true, dev, CreateBuffer);
     INIT_PROC(true, dev, DestroyBuffer);
     INIT_PROC(true, dev, CreateBufferView);
@@ -314,32 +315,80 @@ bool InitDispatchTable(
     INIT_PROC(true, dev, CmdNextSubpass);
     INIT_PROC(true, dev, CmdEndRenderPass);
     INIT_PROC(true, dev, CmdExecuteCommands);
-    INIT_PROC(false, dev, BindBufferMemory2);
-    INIT_PROC(false, dev, BindImageMemory2);
-    INIT_PROC(false, dev, GetDeviceGroupPeerMemoryFeatures);
-    INIT_PROC(false, dev, CmdSetDeviceMask);
-    INIT_PROC(false, dev, CmdDispatchBase);
-    INIT_PROC(false, dev, GetImageMemoryRequirements2);
-    INIT_PROC(false, dev, GetBufferMemoryRequirements2);
-    INIT_PROC(false, dev, GetImageSparseMemoryRequirements2);
-    INIT_PROC(false, dev, TrimCommandPool);
-    INIT_PROC(false, dev, GetDeviceQueue2);
-    INIT_PROC(false, dev, CreateSamplerYcbcrConversion);
-    INIT_PROC(false, dev, DestroySamplerYcbcrConversion);
-    INIT_PROC(false, dev, CreateDescriptorUpdateTemplate);
-    INIT_PROC(false, dev, DestroyDescriptorUpdateTemplate);
-    INIT_PROC(false, dev, UpdateDescriptorSetWithTemplate);
-    INIT_PROC(false, dev, GetDescriptorSetLayoutSupport);
     INIT_PROC_EXT(KHR_swapchain, true, dev, CreateSwapchainKHR);
     INIT_PROC_EXT(KHR_swapchain, true, dev, DestroySwapchainKHR);
     INIT_PROC_EXT(KHR_swapchain, true, dev, GetSwapchainImagesKHR);
     INIT_PROC_EXT(KHR_swapchain, true, dev, AcquireNextImageKHR);
     INIT_PROC_EXT(KHR_swapchain, true, dev, QueuePresentKHR);
+    INIT_PROC(false, dev, TrimCommandPool);
+    INIT_PROC(false, dev, GetDeviceGroupPeerMemoryFeatures);
+    INIT_PROC(false, dev, BindBufferMemory2);
+    INIT_PROC(false, dev, BindImageMemory2);
+    INIT_PROC(false, dev, CmdSetDeviceMask);
     INIT_PROC_EXT(KHR_swapchain, false, dev, GetDeviceGroupPresentCapabilitiesKHR);
     INIT_PROC_EXT(KHR_swapchain, false, dev, GetDeviceGroupSurfacePresentModesKHR);
     INIT_PROC_EXT(KHR_swapchain, false, dev, AcquireNextImage2KHR);
-    INIT_PROC_EXT(ANDROID_external_memory_android_hardware_buffer, false, dev, GetAndroidHardwareBufferPropertiesANDROID);
-    INIT_PROC_EXT(ANDROID_external_memory_android_hardware_buffer, false, dev, GetMemoryAndroidHardwareBufferANDROID);
+    INIT_PROC(false, dev, CmdDispatchBase);
+    INIT_PROC(false, dev, CreateDescriptorUpdateTemplate);
+    INIT_PROC(false, dev, DestroyDescriptorUpdateTemplate);
+    INIT_PROC(false, dev, UpdateDescriptorSetWithTemplate);
+    INIT_PROC(false, dev, GetBufferMemoryRequirements2);
+    INIT_PROC(false, dev, GetImageMemoryRequirements2);
+    INIT_PROC(false, dev, GetImageSparseMemoryRequirements2);
+    INIT_PROC(false, dev, GetDeviceBufferMemoryRequirements);
+    INIT_PROC(false, dev, GetDeviceImageMemoryRequirements);
+    INIT_PROC(false, dev, GetDeviceImageSparseMemoryRequirements);
+    INIT_PROC(false, dev, CreateSamplerYcbcrConversion);
+    INIT_PROC(false, dev, DestroySamplerYcbcrConversion);
+    INIT_PROC(false, dev, GetDeviceQueue2);
+    INIT_PROC(false, dev, GetDescriptorSetLayoutSupport);
+    INIT_PROC(false, dev, CreateRenderPass2);
+    INIT_PROC(false, dev, CmdBeginRenderPass2);
+    INIT_PROC(false, dev, CmdNextSubpass2);
+    INIT_PROC(false, dev, CmdEndRenderPass2);
+    INIT_PROC(false, dev, GetSemaphoreCounterValue);
+    INIT_PROC(false, dev, WaitSemaphores);
+    INIT_PROC(false, dev, SignalSemaphore);
+    INIT_PROC_EXT(ANDROID_external_memory_android_hardware_buffer, true, dev, GetAndroidHardwareBufferPropertiesANDROID);
+    INIT_PROC_EXT(ANDROID_external_memory_android_hardware_buffer, true, dev, GetMemoryAndroidHardwareBufferANDROID);
+    INIT_PROC(false, dev, CmdDrawIndirectCount);
+    INIT_PROC(false, dev, CmdDrawIndexedIndirectCount);
+    INIT_PROC(false, dev, GetBufferOpaqueCaptureAddress);
+    INIT_PROC(false, dev, GetBufferDeviceAddress);
+    INIT_PROC(false, dev, GetDeviceMemoryOpaqueCaptureAddress);
+    INIT_PROC(false, dev, CmdSetCullMode);
+    INIT_PROC(false, dev, CmdSetFrontFace);
+    INIT_PROC(false, dev, CmdSetPrimitiveTopology);
+    INIT_PROC(false, dev, CmdSetViewportWithCount);
+    INIT_PROC(false, dev, CmdSetScissorWithCount);
+    INIT_PROC(false, dev, CmdBindVertexBuffers2);
+    INIT_PROC(false, dev, CmdSetDepthTestEnable);
+    INIT_PROC(false, dev, CmdSetDepthWriteEnable);
+    INIT_PROC(false, dev, CmdSetDepthCompareOp);
+    INIT_PROC(false, dev, CmdSetDepthBoundsTestEnable);
+    INIT_PROC(false, dev, CmdSetStencilTestEnable);
+    INIT_PROC(false, dev, CmdSetStencilOp);
+    INIT_PROC(false, dev, CmdSetRasterizerDiscardEnable);
+    INIT_PROC(false, dev, CmdSetDepthBiasEnable);
+    INIT_PROC(false, dev, CmdSetPrimitiveRestartEnable);
+    INIT_PROC(false, dev, CreatePrivateDataSlot);
+    INIT_PROC(false, dev, DestroyPrivateDataSlot);
+    INIT_PROC(false, dev, SetPrivateData);
+    INIT_PROC(false, dev, GetPrivateData);
+    INIT_PROC(false, dev, CmdCopyBuffer2);
+    INIT_PROC(false, dev, CmdCopyImage2);
+    INIT_PROC(false, dev, CmdBlitImage2);
+    INIT_PROC(false, dev, CmdCopyBufferToImage2);
+    INIT_PROC(false, dev, CmdCopyImageToBuffer2);
+    INIT_PROC(false, dev, CmdResolveImage2);
+    INIT_PROC(false, dev, CmdSetEvent2);
+    INIT_PROC(false, dev, CmdResetEvent2);
+    INIT_PROC(false, dev, CmdWaitEvents2);
+    INIT_PROC(false, dev, CmdPipelineBarrier2);
+    INIT_PROC(false, dev, QueueSubmit2);
+    INIT_PROC(false, dev, CmdWriteTimestamp2);
+    INIT_PROC(false, dev, CmdBeginRendering);
+    INIT_PROC(false, dev, CmdEndRendering);
     // clang-format on
 
     return success;
@@ -392,6 +441,7 @@ VKAPI_ATTR VkResult ResetEvent(VkDevice device, VkEvent event);
 VKAPI_ATTR VkResult CreateQueryPool(VkDevice device, const VkQueryPoolCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkQueryPool* pQueryPool);
 VKAPI_ATTR void DestroyQueryPool(VkDevice device, VkQueryPool queryPool, const VkAllocationCallbacks* pAllocator);
 VKAPI_ATTR VkResult GetQueryPoolResults(VkDevice device, VkQueryPool queryPool, uint32_t firstQuery, uint32_t queryCount, size_t dataSize, void* pData, VkDeviceSize stride, VkQueryResultFlags flags);
+VKAPI_ATTR void ResetQueryPool(VkDevice device, VkQueryPool queryPool, uint32_t firstQuery, uint32_t queryCount);
 VKAPI_ATTR VkResult CreateBuffer(VkDevice device, const VkBufferCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkBuffer* pBuffer);
 VKAPI_ATTR void DestroyBuffer(VkDevice device, VkBuffer buffer, const VkAllocationCallbacks* pAllocator);
 VKAPI_ATTR VkResult CreateBufferView(VkDevice device, const VkBufferViewCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkBufferView* pView);
@@ -479,33 +529,7 @@ VKAPI_ATTR void CmdBeginRenderPass(VkCommandBuffer commandBuffer, const VkRender
 VKAPI_ATTR void CmdNextSubpass(VkCommandBuffer commandBuffer, VkSubpassContents contents);
 VKAPI_ATTR void CmdEndRenderPass(VkCommandBuffer commandBuffer);
 VKAPI_ATTR void CmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t commandBufferCount, const VkCommandBuffer* pCommandBuffers);
-VKAPI_ATTR VkResult BindBufferMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindBufferMemoryInfo* pBindInfos);
-VKAPI_ATTR VkResult BindImageMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindImageMemoryInfo* pBindInfos);
-VKAPI_ATTR void GetDeviceGroupPeerMemoryFeatures(VkDevice device, uint32_t heapIndex, uint32_t localDeviceIndex, uint32_t remoteDeviceIndex, VkPeerMemoryFeatureFlags* pPeerMemoryFeatures);
-VKAPI_ATTR void CmdSetDeviceMask(VkCommandBuffer commandBuffer, uint32_t deviceMask);
-VKAPI_ATTR void CmdDispatchBase(VkCommandBuffer commandBuffer, uint32_t baseGroupX, uint32_t baseGroupY, uint32_t baseGroupZ, uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ);
-VKAPI_ATTR VkResult EnumeratePhysicalDeviceGroups(VkInstance instance, uint32_t* pPhysicalDeviceGroupCount, VkPhysicalDeviceGroupProperties* pPhysicalDeviceGroupProperties);
-VKAPI_ATTR void GetImageMemoryRequirements2(VkDevice device, const VkImageMemoryRequirementsInfo2* pInfo, VkMemoryRequirements2* pMemoryRequirements);
-VKAPI_ATTR void GetBufferMemoryRequirements2(VkDevice device, const VkBufferMemoryRequirementsInfo2* pInfo, VkMemoryRequirements2* pMemoryRequirements);
-VKAPI_ATTR void GetImageSparseMemoryRequirements2(VkDevice device, const VkImageSparseMemoryRequirementsInfo2* pInfo, uint32_t* pSparseMemoryRequirementCount, VkSparseImageMemoryRequirements2* pSparseMemoryRequirements);
-VKAPI_ATTR void GetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2* pFeatures);
-VKAPI_ATTR void GetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties2* pProperties);
-VKAPI_ATTR void GetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice, VkFormat format, VkFormatProperties2* pFormatProperties);
-VKAPI_ATTR VkResult GetPhysicalDeviceImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2* pImageFormatInfo, VkImageFormatProperties2* pImageFormatProperties);
-VKAPI_ATTR void GetPhysicalDeviceQueueFamilyProperties2(VkPhysicalDevice physicalDevice, uint32_t* pQueueFamilyPropertyCount, VkQueueFamilyProperties2* pQueueFamilyProperties);
-VKAPI_ATTR void GetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties2* pMemoryProperties);
-VKAPI_ATTR void GetPhysicalDeviceSparseImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSparseImageFormatInfo2* pFormatInfo, uint32_t* pPropertyCount, VkSparseImageFormatProperties2* pProperties);
-VKAPI_ATTR void TrimCommandPool(VkDevice device, VkCommandPool commandPool, VkCommandPoolTrimFlags flags);
-VKAPI_ATTR void GetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2* pQueueInfo, VkQueue* pQueue);
-VKAPI_ATTR VkResult CreateSamplerYcbcrConversion(VkDevice device, const VkSamplerYcbcrConversionCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSamplerYcbcrConversion* pYcbcrConversion);
-VKAPI_ATTR void DestroySamplerYcbcrConversion(VkDevice device, VkSamplerYcbcrConversion ycbcrConversion, const VkAllocationCallbacks* pAllocator);
-VKAPI_ATTR VkResult CreateDescriptorUpdateTemplate(VkDevice device, const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate);
-VKAPI_ATTR void DestroyDescriptorUpdateTemplate(VkDevice device, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const VkAllocationCallbacks* pAllocator);
-VKAPI_ATTR void UpdateDescriptorSetWithTemplate(VkDevice device, VkDescriptorSet descriptorSet, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void* pData);
-VKAPI_ATTR void GetPhysicalDeviceExternalBufferProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalBufferInfo* pExternalBufferInfo, VkExternalBufferProperties* pExternalBufferProperties);
-VKAPI_ATTR void GetPhysicalDeviceExternalFenceProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalFenceInfo* pExternalFenceInfo, VkExternalFenceProperties* pExternalFenceProperties);
-VKAPI_ATTR void GetPhysicalDeviceExternalSemaphoreProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalSemaphoreInfo* pExternalSemaphoreInfo, VkExternalSemaphoreProperties* pExternalSemaphoreProperties);
-VKAPI_ATTR void GetDescriptorSetLayoutSupport(VkDevice device, const VkDescriptorSetLayoutCreateInfo* pCreateInfo, VkDescriptorSetLayoutSupport* pSupport);
+VKAPI_ATTR VkResult CreateAndroidSurfaceKHR(VkInstance instance, const VkAndroidSurfaceCreateInfoKHR* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface);
 VKAPI_ATTR void DestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surface, const VkAllocationCallbacks* pAllocator);
 VKAPI_ATTR VkResult GetPhysicalDeviceSurfaceSupportKHR(VkPhysicalDevice physicalDevice, uint32_t queueFamilyIndex, VkSurfaceKHR surface, VkBool32* pSupported);
 VKAPI_ATTR VkResult GetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, VkSurfaceCapabilitiesKHR* pSurfaceCapabilities);
@@ -516,13 +540,88 @@ VKAPI_ATTR void DestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain, c
 VKAPI_ATTR VkResult GetSwapchainImagesKHR(VkDevice device, VkSwapchainKHR swapchain, uint32_t* pSwapchainImageCount, VkImage* pSwapchainImages);
 VKAPI_ATTR VkResult AcquireNextImageKHR(VkDevice device, VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphore semaphore, VkFence fence, uint32_t* pImageIndex);
 VKAPI_ATTR VkResult QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPresentInfo);
+VKAPI_ATTR void GetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2* pFeatures);
+VKAPI_ATTR void GetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties2* pProperties);
+VKAPI_ATTR void GetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice, VkFormat format, VkFormatProperties2* pFormatProperties);
+VKAPI_ATTR VkResult GetPhysicalDeviceImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2* pImageFormatInfo, VkImageFormatProperties2* pImageFormatProperties);
+VKAPI_ATTR void GetPhysicalDeviceQueueFamilyProperties2(VkPhysicalDevice physicalDevice, uint32_t* pQueueFamilyPropertyCount, VkQueueFamilyProperties2* pQueueFamilyProperties);
+VKAPI_ATTR void GetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties2* pMemoryProperties);
+VKAPI_ATTR void GetPhysicalDeviceSparseImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSparseImageFormatInfo2* pFormatInfo, uint32_t* pPropertyCount, VkSparseImageFormatProperties2* pProperties);
+VKAPI_ATTR void TrimCommandPool(VkDevice device, VkCommandPool commandPool, VkCommandPoolTrimFlags flags);
+VKAPI_ATTR void GetPhysicalDeviceExternalBufferProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalBufferInfo* pExternalBufferInfo, VkExternalBufferProperties* pExternalBufferProperties);
+VKAPI_ATTR void GetPhysicalDeviceExternalSemaphoreProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalSemaphoreInfo* pExternalSemaphoreInfo, VkExternalSemaphoreProperties* pExternalSemaphoreProperties);
+VKAPI_ATTR void GetPhysicalDeviceExternalFenceProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalFenceInfo* pExternalFenceInfo, VkExternalFenceProperties* pExternalFenceProperties);
+VKAPI_ATTR VkResult EnumeratePhysicalDeviceGroups(VkInstance instance, uint32_t* pPhysicalDeviceGroupCount, VkPhysicalDeviceGroupProperties* pPhysicalDeviceGroupProperties);
+VKAPI_ATTR void GetDeviceGroupPeerMemoryFeatures(VkDevice device, uint32_t heapIndex, uint32_t localDeviceIndex, uint32_t remoteDeviceIndex, VkPeerMemoryFeatureFlags* pPeerMemoryFeatures);
+VKAPI_ATTR VkResult BindBufferMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindBufferMemoryInfo* pBindInfos);
+VKAPI_ATTR VkResult BindImageMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindImageMemoryInfo* pBindInfos);
+VKAPI_ATTR void CmdSetDeviceMask(VkCommandBuffer commandBuffer, uint32_t deviceMask);
 VKAPI_ATTR VkResult GetDeviceGroupPresentCapabilitiesKHR(VkDevice device, VkDeviceGroupPresentCapabilitiesKHR* pDeviceGroupPresentCapabilities);
 VKAPI_ATTR VkResult GetDeviceGroupSurfacePresentModesKHR(VkDevice device, VkSurfaceKHR surface, VkDeviceGroupPresentModeFlagsKHR* pModes);
-VKAPI_ATTR VkResult GetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, uint32_t* pRectCount, VkRect2D* pRects);
 VKAPI_ATTR VkResult AcquireNextImage2KHR(VkDevice device, const VkAcquireNextImageInfoKHR* pAcquireInfo, uint32_t* pImageIndex);
-VKAPI_ATTR VkResult CreateAndroidSurfaceKHR(VkInstance instance, const VkAndroidSurfaceCreateInfoKHR* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface);
+VKAPI_ATTR void CmdDispatchBase(VkCommandBuffer commandBuffer, uint32_t baseGroupX, uint32_t baseGroupY, uint32_t baseGroupZ, uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ);
+VKAPI_ATTR VkResult GetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, uint32_t* pRectCount, VkRect2D* pRects);
+VKAPI_ATTR VkResult CreateDescriptorUpdateTemplate(VkDevice device, const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate);
+VKAPI_ATTR void DestroyDescriptorUpdateTemplate(VkDevice device, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const VkAllocationCallbacks* pAllocator);
+VKAPI_ATTR void UpdateDescriptorSetWithTemplate(VkDevice device, VkDescriptorSet descriptorSet, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void* pData);
+VKAPI_ATTR void GetBufferMemoryRequirements2(VkDevice device, const VkBufferMemoryRequirementsInfo2* pInfo, VkMemoryRequirements2* pMemoryRequirements);
+VKAPI_ATTR void GetImageMemoryRequirements2(VkDevice device, const VkImageMemoryRequirementsInfo2* pInfo, VkMemoryRequirements2* pMemoryRequirements);
+VKAPI_ATTR void GetImageSparseMemoryRequirements2(VkDevice device, const VkImageSparseMemoryRequirementsInfo2* pInfo, uint32_t* pSparseMemoryRequirementCount, VkSparseImageMemoryRequirements2* pSparseMemoryRequirements);
+VKAPI_ATTR void GetDeviceBufferMemoryRequirements(VkDevice device, const VkDeviceBufferMemoryRequirements* pInfo, VkMemoryRequirements2* pMemoryRequirements);
+VKAPI_ATTR void GetDeviceImageMemoryRequirements(VkDevice device, const VkDeviceImageMemoryRequirements* pInfo, VkMemoryRequirements2* pMemoryRequirements);
+VKAPI_ATTR void GetDeviceImageSparseMemoryRequirements(VkDevice device, const VkDeviceImageMemoryRequirements* pInfo, uint32_t* pSparseMemoryRequirementCount, VkSparseImageMemoryRequirements2* pSparseMemoryRequirements);
+VKAPI_ATTR VkResult CreateSamplerYcbcrConversion(VkDevice device, const VkSamplerYcbcrConversionCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSamplerYcbcrConversion* pYcbcrConversion);
+VKAPI_ATTR void DestroySamplerYcbcrConversion(VkDevice device, VkSamplerYcbcrConversion ycbcrConversion, const VkAllocationCallbacks* pAllocator);
+VKAPI_ATTR void GetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2* pQueueInfo, VkQueue* pQueue);
+VKAPI_ATTR void GetDescriptorSetLayoutSupport(VkDevice device, const VkDescriptorSetLayoutCreateInfo* pCreateInfo, VkDescriptorSetLayoutSupport* pSupport);
+VKAPI_ATTR VkResult CreateRenderPass2(VkDevice device, const VkRenderPassCreateInfo2* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkRenderPass* pRenderPass);
+VKAPI_ATTR void CmdBeginRenderPass2(VkCommandBuffer commandBuffer, const VkRenderPassBeginInfo* pRenderPassBegin, const VkSubpassBeginInfo* pSubpassBeginInfo);
+VKAPI_ATTR void CmdNextSubpass2(VkCommandBuffer commandBuffer, const VkSubpassBeginInfo* pSubpassBeginInfo, const VkSubpassEndInfo* pSubpassEndInfo);
+VKAPI_ATTR void CmdEndRenderPass2(VkCommandBuffer commandBuffer, const VkSubpassEndInfo* pSubpassEndInfo);
+VKAPI_ATTR VkResult GetSemaphoreCounterValue(VkDevice device, VkSemaphore semaphore, uint64_t* pValue);
+VKAPI_ATTR VkResult WaitSemaphores(VkDevice device, const VkSemaphoreWaitInfo* pWaitInfo, uint64_t timeout);
+VKAPI_ATTR VkResult SignalSemaphore(VkDevice device, const VkSemaphoreSignalInfo* pSignalInfo);
 VKAPI_ATTR VkResult GetAndroidHardwareBufferPropertiesANDROID(VkDevice device, const struct AHardwareBuffer* buffer, VkAndroidHardwareBufferPropertiesANDROID* pProperties);
 VKAPI_ATTR VkResult GetMemoryAndroidHardwareBufferANDROID(VkDevice device, const VkMemoryGetAndroidHardwareBufferInfoANDROID* pInfo, struct AHardwareBuffer** pBuffer);
+VKAPI_ATTR void CmdDrawIndirectCount(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride);
+VKAPI_ATTR void CmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride);
+VKAPI_ATTR uint64_t GetBufferOpaqueCaptureAddress(VkDevice device, const VkBufferDeviceAddressInfo* pInfo);
+VKAPI_ATTR VkDeviceAddress GetBufferDeviceAddress(VkDevice device, const VkBufferDeviceAddressInfo* pInfo);
+VKAPI_ATTR uint64_t GetDeviceMemoryOpaqueCaptureAddress(VkDevice device, const VkDeviceMemoryOpaqueCaptureAddressInfo* pInfo);
+VKAPI_ATTR VkResult GetPhysicalDeviceToolProperties(VkPhysicalDevice physicalDevice, uint32_t* pToolCount, VkPhysicalDeviceToolProperties* pToolProperties);
+VKAPI_ATTR void CmdSetCullMode(VkCommandBuffer commandBuffer, VkCullModeFlags cullMode);
+VKAPI_ATTR void CmdSetFrontFace(VkCommandBuffer commandBuffer, VkFrontFace frontFace);
+VKAPI_ATTR void CmdSetPrimitiveTopology(VkCommandBuffer commandBuffer, VkPrimitiveTopology primitiveTopology);
+VKAPI_ATTR void CmdSetViewportWithCount(VkCommandBuffer commandBuffer, uint32_t viewportCount, const VkViewport* pViewports);
+VKAPI_ATTR void CmdSetScissorWithCount(VkCommandBuffer commandBuffer, uint32_t scissorCount, const VkRect2D* pScissors);
+VKAPI_ATTR void CmdBindVertexBuffers2(VkCommandBuffer commandBuffer, uint32_t firstBinding, uint32_t bindingCount, const VkBuffer* pBuffers, const VkDeviceSize* pOffsets, const VkDeviceSize* pSizes, const VkDeviceSize* pStrides);
+VKAPI_ATTR void CmdSetDepthTestEnable(VkCommandBuffer commandBuffer, VkBool32 depthTestEnable);
+VKAPI_ATTR void CmdSetDepthWriteEnable(VkCommandBuffer commandBuffer, VkBool32 depthWriteEnable);
+VKAPI_ATTR void CmdSetDepthCompareOp(VkCommandBuffer commandBuffer, VkCompareOp depthCompareOp);
+VKAPI_ATTR void CmdSetDepthBoundsTestEnable(VkCommandBuffer commandBuffer, VkBool32 depthBoundsTestEnable);
+VKAPI_ATTR void CmdSetStencilTestEnable(VkCommandBuffer commandBuffer, VkBool32 stencilTestEnable);
+VKAPI_ATTR void CmdSetStencilOp(VkCommandBuffer commandBuffer, VkStencilFaceFlags faceMask, VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp);
+VKAPI_ATTR void CmdSetRasterizerDiscardEnable(VkCommandBuffer commandBuffer, VkBool32 rasterizerDiscardEnable);
+VKAPI_ATTR void CmdSetDepthBiasEnable(VkCommandBuffer commandBuffer, VkBool32 depthBiasEnable);
+VKAPI_ATTR void CmdSetPrimitiveRestartEnable(VkCommandBuffer commandBuffer, VkBool32 primitiveRestartEnable);
+VKAPI_ATTR VkResult CreatePrivateDataSlot(VkDevice device, const VkPrivateDataSlotCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkPrivateDataSlot* pPrivateDataSlot);
+VKAPI_ATTR void DestroyPrivateDataSlot(VkDevice device, VkPrivateDataSlot privateDataSlot, const VkAllocationCallbacks* pAllocator);
+VKAPI_ATTR VkResult SetPrivateData(VkDevice device, VkObjectType objectType, uint64_t objectHandle, VkPrivateDataSlot privateDataSlot, uint64_t data);
+VKAPI_ATTR void GetPrivateData(VkDevice device, VkObjectType objectType, uint64_t objectHandle, VkPrivateDataSlot privateDataSlot, uint64_t* pData);
+VKAPI_ATTR void CmdCopyBuffer2(VkCommandBuffer commandBuffer, const VkCopyBufferInfo2* pCopyBufferInfo);
+VKAPI_ATTR void CmdCopyImage2(VkCommandBuffer commandBuffer, const VkCopyImageInfo2* pCopyImageInfo);
+VKAPI_ATTR void CmdBlitImage2(VkCommandBuffer commandBuffer, const VkBlitImageInfo2* pBlitImageInfo);
+VKAPI_ATTR void CmdCopyBufferToImage2(VkCommandBuffer commandBuffer, const VkCopyBufferToImageInfo2* pCopyBufferToImageInfo);
+VKAPI_ATTR void CmdCopyImageToBuffer2(VkCommandBuffer commandBuffer, const VkCopyImageToBufferInfo2* pCopyImageToBufferInfo);
+VKAPI_ATTR void CmdResolveImage2(VkCommandBuffer commandBuffer, const VkResolveImageInfo2* pResolveImageInfo);
+VKAPI_ATTR void CmdSetEvent2(VkCommandBuffer commandBuffer, VkEvent event, const VkDependencyInfo* pDependencyInfo);
+VKAPI_ATTR void CmdResetEvent2(VkCommandBuffer commandBuffer, VkEvent event, VkPipelineStageFlags2 stageMask);
+VKAPI_ATTR void CmdWaitEvents2(VkCommandBuffer commandBuffer, uint32_t eventCount, const VkEvent* pEvents, const VkDependencyInfo* pDependencyInfos);
+VKAPI_ATTR void CmdPipelineBarrier2(VkCommandBuffer commandBuffer, const VkDependencyInfo* pDependencyInfo);
+VKAPI_ATTR VkResult QueueSubmit2(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2* pSubmits, VkFence fence);
+VKAPI_ATTR void CmdWriteTimestamp2(VkCommandBuffer commandBuffer, VkPipelineStageFlags2 stage, VkQueryPool queryPool, uint32_t query);
+VKAPI_ATTR void CmdBeginRendering(VkCommandBuffer commandBuffer, const VkRenderingInfo* pRenderingInfo);
+VKAPI_ATTR void CmdEndRendering(VkCommandBuffer commandBuffer);
 
 VKAPI_ATTR VkResult EnumeratePhysicalDevices(VkInstance instance, uint32_t* pPhysicalDeviceCount, VkPhysicalDevice* pPhysicalDevices) {
     return GetData(instance).dispatch.EnumeratePhysicalDevices(instance, pPhysicalDeviceCount, pPhysicalDevices);
@@ -535,6 +634,7 @@ VKAPI_ATTR PFN_vkVoidFunction GetDeviceProcAddr(VkDevice device, const char* pNa
     }
 
     static const char* const known_non_device_names[] = {
+        "vkAcquireDrmDisplayEXT",
         "vkCreateAndroidSurfaceKHR",
         "vkCreateDebugReportCallbackEXT",
         "vkCreateDebugUtilsMessengerEXT",
@@ -552,9 +652,11 @@ VKAPI_ATTR PFN_vkVoidFunction GetDeviceProcAddr(VkDevice device, const char* pNa
         "vkEnumerateInstanceVersion",
         "vkEnumeratePhysicalDeviceGroups",
         "vkEnumeratePhysicalDeviceGroupsKHR",
+        "vkEnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR",
         "vkEnumeratePhysicalDevices",
         "vkGetDisplayModeProperties2KHR",
         "vkGetDisplayPlaneCapabilities2KHR",
+        "vkGetDrmDisplayEXT",
         "vkGetInstanceProcAddr",
         "vkGetPhysicalDeviceCalibrateableTimeDomainsEXT",
         "vkGetPhysicalDeviceDisplayPlaneProperties2KHR",
@@ -572,7 +674,7 @@ VKAPI_ATTR PFN_vkVoidFunction GetDeviceProcAddr(VkDevice device, const char* pNa
         "vkGetPhysicalDeviceFormatProperties",
         "vkGetPhysicalDeviceFormatProperties2",
         "vkGetPhysicalDeviceFormatProperties2KHR",
-        "vkGetPhysicalDeviceGeneratedCommandsPropertiesNVX",
+        "vkGetPhysicalDeviceFragmentShadingRatesKHR",
         "vkGetPhysicalDeviceImageFormatProperties",
         "vkGetPhysicalDeviceImageFormatProperties2",
         "vkGetPhysicalDeviceImageFormatProperties2KHR",
@@ -580,10 +682,12 @@ VKAPI_ATTR PFN_vkVoidFunction GetDeviceProcAddr(VkDevice device, const char* pNa
         "vkGetPhysicalDeviceMemoryProperties2",
         "vkGetPhysicalDeviceMemoryProperties2KHR",
         "vkGetPhysicalDeviceMultisamplePropertiesEXT",
+        "vkGetPhysicalDeviceOpticalFlowImageFormatsNV",
         "vkGetPhysicalDevicePresentRectanglesKHR",
         "vkGetPhysicalDeviceProperties",
         "vkGetPhysicalDeviceProperties2",
         "vkGetPhysicalDeviceProperties2KHR",
+        "vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR",
         "vkGetPhysicalDeviceQueueFamilyProperties",
         "vkGetPhysicalDeviceQueueFamilyProperties2",
         "vkGetPhysicalDeviceQueueFamilyProperties2KHR",
@@ -596,6 +700,10 @@ VKAPI_ATTR PFN_vkVoidFunction GetDeviceProcAddr(VkDevice device, const char* pNa
         "vkGetPhysicalDeviceSurfaceFormatsKHR",
         "vkGetPhysicalDeviceSurfacePresentModesKHR",
         "vkGetPhysicalDeviceSurfaceSupportKHR",
+        "vkGetPhysicalDeviceToolProperties",
+        "vkGetPhysicalDeviceToolPropertiesEXT",
+        "vkGetPhysicalDeviceVideoCapabilitiesKHR",
+        "vkGetPhysicalDeviceVideoFormatPropertiesKHR",
         "vkSubmitDebugUtilsMessageEXT",
     };
     // clang-format on
@@ -622,9 +730,10 @@ VKAPI_ATTR PFN_vkVoidFunction GetInstanceProcAddr(VkInstance instance, const cha
     // global functions
     if (instance == VK_NULL_HANDLE) {
         if (strcmp(pName, "vkCreateInstance") == 0) return reinterpret_cast<PFN_vkVoidFunction>(CreateInstance);
+        if (strcmp(pName, "vkGetInstanceProcAddr") == 0) return reinterpret_cast<PFN_vkVoidFunction>(GetInstanceProcAddr);
+        if (strcmp(pName, "vkEnumerateInstanceVersion") == 0) return reinterpret_cast<PFN_vkVoidFunction>(EnumerateInstanceVersion);
         if (strcmp(pName, "vkEnumerateInstanceLayerProperties") == 0) return reinterpret_cast<PFN_vkVoidFunction>(EnumerateInstanceLayerProperties);
         if (strcmp(pName, "vkEnumerateInstanceExtensionProperties") == 0) return reinterpret_cast<PFN_vkVoidFunction>(EnumerateInstanceExtensionProperties);
-        if (strcmp(pName, "vkEnumerateInstanceVersion") == 0) return reinterpret_cast<PFN_vkVoidFunction>(EnumerateInstanceVersion);
 
         ALOGE("invalid vkGetInstanceProcAddr(VK_NULL_HANDLE, \"%s\") call", pName);
         return nullptr;
@@ -646,18 +755,26 @@ VKAPI_ATTR PFN_vkVoidFunction GetInstanceProcAddr(VkInstance instance, const cha
         { "vkBindImageMemory2", reinterpret_cast<PFN_vkVoidFunction>(BindImageMemory2) },
         { "vkCmdBeginQuery", reinterpret_cast<PFN_vkVoidFunction>(CmdBeginQuery) },
         { "vkCmdBeginRenderPass", reinterpret_cast<PFN_vkVoidFunction>(CmdBeginRenderPass) },
+        { "vkCmdBeginRenderPass2", reinterpret_cast<PFN_vkVoidFunction>(CmdBeginRenderPass2) },
+        { "vkCmdBeginRendering", reinterpret_cast<PFN_vkVoidFunction>(CmdBeginRendering) },
         { "vkCmdBindDescriptorSets", reinterpret_cast<PFN_vkVoidFunction>(CmdBindDescriptorSets) },
         { "vkCmdBindIndexBuffer", reinterpret_cast<PFN_vkVoidFunction>(CmdBindIndexBuffer) },
         { "vkCmdBindPipeline", reinterpret_cast<PFN_vkVoidFunction>(CmdBindPipeline) },
         { "vkCmdBindVertexBuffers", reinterpret_cast<PFN_vkVoidFunction>(CmdBindVertexBuffers) },
+        { "vkCmdBindVertexBuffers2", reinterpret_cast<PFN_vkVoidFunction>(CmdBindVertexBuffers2) },
         { "vkCmdBlitImage", reinterpret_cast<PFN_vkVoidFunction>(CmdBlitImage) },
+        { "vkCmdBlitImage2", reinterpret_cast<PFN_vkVoidFunction>(CmdBlitImage2) },
         { "vkCmdClearAttachments", reinterpret_cast<PFN_vkVoidFunction>(CmdClearAttachments) },
         { "vkCmdClearColorImage", reinterpret_cast<PFN_vkVoidFunction>(CmdClearColorImage) },
         { "vkCmdClearDepthStencilImage", reinterpret_cast<PFN_vkVoidFunction>(CmdClearDepthStencilImage) },
         { "vkCmdCopyBuffer", reinterpret_cast<PFN_vkVoidFunction>(CmdCopyBuffer) },
+        { "vkCmdCopyBuffer2", reinterpret_cast<PFN_vkVoidFunction>(CmdCopyBuffer2) },
         { "vkCmdCopyBufferToImage", reinterpret_cast<PFN_vkVoidFunction>(CmdCopyBufferToImage) },
+        { "vkCmdCopyBufferToImage2", reinterpret_cast<PFN_vkVoidFunction>(CmdCopyBufferToImage2) },
         { "vkCmdCopyImage", reinterpret_cast<PFN_vkVoidFunction>(CmdCopyImage) },
+        { "vkCmdCopyImage2", reinterpret_cast<PFN_vkVoidFunction>(CmdCopyImage2) },
         { "vkCmdCopyImageToBuffer", reinterpret_cast<PFN_vkVoidFunction>(CmdCopyImageToBuffer) },
+        { "vkCmdCopyImageToBuffer2", reinterpret_cast<PFN_vkVoidFunction>(CmdCopyImageToBuffer2) },
         { "vkCmdCopyQueryPoolResults", reinterpret_cast<PFN_vkVoidFunction>(CmdCopyQueryPoolResults) },
         { "vkCmdDispatch", reinterpret_cast<PFN_vkVoidFunction>(CmdDispatch) },
         { "vkCmdDispatchBase", reinterpret_cast<PFN_vkVoidFunction>(CmdDispatchBase) },
@@ -665,31 +782,56 @@ VKAPI_ATTR PFN_vkVoidFunction GetInstanceProcAddr(VkInstance instance, const cha
         { "vkCmdDraw", reinterpret_cast<PFN_vkVoidFunction>(CmdDraw) },
         { "vkCmdDrawIndexed", reinterpret_cast<PFN_vkVoidFunction>(CmdDrawIndexed) },
         { "vkCmdDrawIndexedIndirect", reinterpret_cast<PFN_vkVoidFunction>(CmdDrawIndexedIndirect) },
+        { "vkCmdDrawIndexedIndirectCount", reinterpret_cast<PFN_vkVoidFunction>(CmdDrawIndexedIndirectCount) },
         { "vkCmdDrawIndirect", reinterpret_cast<PFN_vkVoidFunction>(CmdDrawIndirect) },
+        { "vkCmdDrawIndirectCount", reinterpret_cast<PFN_vkVoidFunction>(CmdDrawIndirectCount) },
         { "vkCmdEndQuery", reinterpret_cast<PFN_vkVoidFunction>(CmdEndQuery) },
         { "vkCmdEndRenderPass", reinterpret_cast<PFN_vkVoidFunction>(CmdEndRenderPass) },
+        { "vkCmdEndRenderPass2", reinterpret_cast<PFN_vkVoidFunction>(CmdEndRenderPass2) },
+        { "vkCmdEndRendering", reinterpret_cast<PFN_vkVoidFunction>(CmdEndRendering) },
         { "vkCmdExecuteCommands", reinterpret_cast<PFN_vkVoidFunction>(CmdExecuteCommands) },
         { "vkCmdFillBuffer", reinterpret_cast<PFN_vkVoidFunction>(CmdFillBuffer) },
         { "vkCmdNextSubpass", reinterpret_cast<PFN_vkVoidFunction>(CmdNextSubpass) },
+        { "vkCmdNextSubpass2", reinterpret_cast<PFN_vkVoidFunction>(CmdNextSubpass2) },
         { "vkCmdPipelineBarrier", reinterpret_cast<PFN_vkVoidFunction>(CmdPipelineBarrier) },
+        { "vkCmdPipelineBarrier2", reinterpret_cast<PFN_vkVoidFunction>(CmdPipelineBarrier2) },
         { "vkCmdPushConstants", reinterpret_cast<PFN_vkVoidFunction>(CmdPushConstants) },
         { "vkCmdResetEvent", reinterpret_cast<PFN_vkVoidFunction>(CmdResetEvent) },
+        { "vkCmdResetEvent2", reinterpret_cast<PFN_vkVoidFunction>(CmdResetEvent2) },
         { "vkCmdResetQueryPool", reinterpret_cast<PFN_vkVoidFunction>(CmdResetQueryPool) },
         { "vkCmdResolveImage", reinterpret_cast<PFN_vkVoidFunction>(CmdResolveImage) },
+        { "vkCmdResolveImage2", reinterpret_cast<PFN_vkVoidFunction>(CmdResolveImage2) },
         { "vkCmdSetBlendConstants", reinterpret_cast<PFN_vkVoidFunction>(CmdSetBlendConstants) },
+        { "vkCmdSetCullMode", reinterpret_cast<PFN_vkVoidFunction>(CmdSetCullMode) },
         { "vkCmdSetDepthBias", reinterpret_cast<PFN_vkVoidFunction>(CmdSetDepthBias) },
+        { "vkCmdSetDepthBiasEnable", reinterpret_cast<PFN_vkVoidFunction>(CmdSetDepthBiasEnable) },
         { "vkCmdSetDepthBounds", reinterpret_cast<PFN_vkVoidFunction>(CmdSetDepthBounds) },
+        { "vkCmdSetDepthBoundsTestEnable", reinterpret_cast<PFN_vkVoidFunction>(CmdSetDepthBoundsTestEnable) },
+        { "vkCmdSetDepthCompareOp", reinterpret_cast<PFN_vkVoidFunction>(CmdSetDepthCompareOp) },
+        { "vkCmdSetDepthTestEnable", reinterpret_cast<PFN_vkVoidFunction>(CmdSetDepthTestEnable) },
+        { "vkCmdSetDepthWriteEnable", reinterpret_cast<PFN_vkVoidFunction>(CmdSetDepthWriteEnable) },
         { "vkCmdSetDeviceMask", reinterpret_cast<PFN_vkVoidFunction>(CmdSetDeviceMask) },
         { "vkCmdSetEvent", reinterpret_cast<PFN_vkVoidFunction>(CmdSetEvent) },
+        { "vkCmdSetEvent2", reinterpret_cast<PFN_vkVoidFunction>(CmdSetEvent2) },
+        { "vkCmdSetFrontFace", reinterpret_cast<PFN_vkVoidFunction>(CmdSetFrontFace) },
         { "vkCmdSetLineWidth", reinterpret_cast<PFN_vkVoidFunction>(CmdSetLineWidth) },
+        { "vkCmdSetPrimitiveRestartEnable", reinterpret_cast<PFN_vkVoidFunction>(CmdSetPrimitiveRestartEnable) },
+        { "vkCmdSetPrimitiveTopology", reinterpret_cast<PFN_vkVoidFunction>(CmdSetPrimitiveTopology) },
+        { "vkCmdSetRasterizerDiscardEnable", reinterpret_cast<PFN_vkVoidFunction>(CmdSetRasterizerDiscardEnable) },
         { "vkCmdSetScissor", reinterpret_cast<PFN_vkVoidFunction>(CmdSetScissor) },
+        { "vkCmdSetScissorWithCount", reinterpret_cast<PFN_vkVoidFunction>(CmdSetScissorWithCount) },
         { "vkCmdSetStencilCompareMask", reinterpret_cast<PFN_vkVoidFunction>(CmdSetStencilCompareMask) },
+        { "vkCmdSetStencilOp", reinterpret_cast<PFN_vkVoidFunction>(CmdSetStencilOp) },
         { "vkCmdSetStencilReference", reinterpret_cast<PFN_vkVoidFunction>(CmdSetStencilReference) },
+        { "vkCmdSetStencilTestEnable", reinterpret_cast<PFN_vkVoidFunction>(CmdSetStencilTestEnable) },
         { "vkCmdSetStencilWriteMask", reinterpret_cast<PFN_vkVoidFunction>(CmdSetStencilWriteMask) },
         { "vkCmdSetViewport", reinterpret_cast<PFN_vkVoidFunction>(CmdSetViewport) },
+        { "vkCmdSetViewportWithCount", reinterpret_cast<PFN_vkVoidFunction>(CmdSetViewportWithCount) },
         { "vkCmdUpdateBuffer", reinterpret_cast<PFN_vkVoidFunction>(CmdUpdateBuffer) },
         { "vkCmdWaitEvents", reinterpret_cast<PFN_vkVoidFunction>(CmdWaitEvents) },
+        { "vkCmdWaitEvents2", reinterpret_cast<PFN_vkVoidFunction>(CmdWaitEvents2) },
         { "vkCmdWriteTimestamp", reinterpret_cast<PFN_vkVoidFunction>(CmdWriteTimestamp) },
+        { "vkCmdWriteTimestamp2", reinterpret_cast<PFN_vkVoidFunction>(CmdWriteTimestamp2) },
         { "vkCreateBuffer", reinterpret_cast<PFN_vkVoidFunction>(CreateBuffer) },
         { "vkCreateBufferView", reinterpret_cast<PFN_vkVoidFunction>(CreateBufferView) },
         { "vkCreateCommandPool", reinterpret_cast<PFN_vkVoidFunction>(CreateCommandPool) },
@@ -707,8 +849,10 @@ VKAPI_ATTR PFN_vkVoidFunction GetInstanceProcAddr(VkInstance instance, const cha
         { "vkCreateInstance", nullptr },
         { "vkCreatePipelineCache", reinterpret_cast<PFN_vkVoidFunction>(CreatePipelineCache) },
         { "vkCreatePipelineLayout", reinterpret_cast<PFN_vkVoidFunction>(CreatePipelineLayout) },
+        { "vkCreatePrivateDataSlot", reinterpret_cast<PFN_vkVoidFunction>(CreatePrivateDataSlot) },
         { "vkCreateQueryPool", reinterpret_cast<PFN_vkVoidFunction>(CreateQueryPool) },
         { "vkCreateRenderPass", reinterpret_cast<PFN_vkVoidFunction>(CreateRenderPass) },
+        { "vkCreateRenderPass2", reinterpret_cast<PFN_vkVoidFunction>(CreateRenderPass2) },
         { "vkCreateSampler", reinterpret_cast<PFN_vkVoidFunction>(CreateSampler) },
         { "vkCreateSamplerYcbcrConversion", reinterpret_cast<PFN_vkVoidFunction>(CreateSamplerYcbcrConversion) },
         { "vkCreateSemaphore", reinterpret_cast<PFN_vkVoidFunction>(CreateSemaphore) },
@@ -730,6 +874,7 @@ VKAPI_ATTR PFN_vkVoidFunction GetInstanceProcAddr(VkInstance instance, const cha
         { "vkDestroyPipeline", reinterpret_cast<PFN_vkVoidFunction>(DestroyPipeline) },
         { "vkDestroyPipelineCache", reinterpret_cast<PFN_vkVoidFunction>(DestroyPipelineCache) },
         { "vkDestroyPipelineLayout", reinterpret_cast<PFN_vkVoidFunction>(DestroyPipelineLayout) },
+        { "vkDestroyPrivateDataSlot", reinterpret_cast<PFN_vkVoidFunction>(DestroyPrivateDataSlot) },
         { "vkDestroyQueryPool", reinterpret_cast<PFN_vkVoidFunction>(DestroyQueryPool) },
         { "vkDestroyRenderPass", reinterpret_cast<PFN_vkVoidFunction>(DestroyRenderPass) },
         { "vkDestroySampler", reinterpret_cast<PFN_vkVoidFunction>(DestroySampler) },
@@ -749,13 +894,19 @@ VKAPI_ATTR PFN_vkVoidFunction GetInstanceProcAddr(VkInstance instance, const cha
         { "vkFreeDescriptorSets", reinterpret_cast<PFN_vkVoidFunction>(FreeDescriptorSets) },
         { "vkFreeMemory", reinterpret_cast<PFN_vkVoidFunction>(FreeMemory) },
         { "vkGetAndroidHardwareBufferPropertiesANDROID", reinterpret_cast<PFN_vkVoidFunction>(GetAndroidHardwareBufferPropertiesANDROID) },
+        { "vkGetBufferDeviceAddress", reinterpret_cast<PFN_vkVoidFunction>(GetBufferDeviceAddress) },
         { "vkGetBufferMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(GetBufferMemoryRequirements) },
         { "vkGetBufferMemoryRequirements2", reinterpret_cast<PFN_vkVoidFunction>(GetBufferMemoryRequirements2) },
+        { "vkGetBufferOpaqueCaptureAddress", reinterpret_cast<PFN_vkVoidFunction>(GetBufferOpaqueCaptureAddress) },
         { "vkGetDescriptorSetLayoutSupport", reinterpret_cast<PFN_vkVoidFunction>(GetDescriptorSetLayoutSupport) },
+        { "vkGetDeviceBufferMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(GetDeviceBufferMemoryRequirements) },
         { "vkGetDeviceGroupPeerMemoryFeatures", reinterpret_cast<PFN_vkVoidFunction>(GetDeviceGroupPeerMemoryFeatures) },
         { "vkGetDeviceGroupPresentCapabilitiesKHR", reinterpret_cast<PFN_vkVoidFunction>(GetDeviceGroupPresentCapabilitiesKHR) },
         { "vkGetDeviceGroupSurfacePresentModesKHR", reinterpret_cast<PFN_vkVoidFunction>(GetDeviceGroupSurfacePresentModesKHR) },
+        { "vkGetDeviceImageMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(GetDeviceImageMemoryRequirements) },
+        { "vkGetDeviceImageSparseMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(GetDeviceImageSparseMemoryRequirements) },
         { "vkGetDeviceMemoryCommitment", reinterpret_cast<PFN_vkVoidFunction>(GetDeviceMemoryCommitment) },
+        { "vkGetDeviceMemoryOpaqueCaptureAddress", reinterpret_cast<PFN_vkVoidFunction>(GetDeviceMemoryOpaqueCaptureAddress) },
         { "vkGetDeviceProcAddr", reinterpret_cast<PFN_vkVoidFunction>(GetDeviceProcAddr) },
         { "vkGetDeviceQueue", reinterpret_cast<PFN_vkVoidFunction>(GetDeviceQueue) },
         { "vkGetDeviceQueue2", reinterpret_cast<PFN_vkVoidFunction>(GetDeviceQueue2) },
@@ -769,8 +920,10 @@ VKAPI_ATTR PFN_vkVoidFunction GetInstanceProcAddr(VkInstance instance, const cha
         { "vkGetInstanceProcAddr", reinterpret_cast<PFN_vkVoidFunction>(GetInstanceProcAddr) },
         { "vkGetMemoryAndroidHardwareBufferANDROID", reinterpret_cast<PFN_vkVoidFunction>(GetMemoryAndroidHardwareBufferANDROID) },
         { "vkGetPipelineCacheData", reinterpret_cast<PFN_vkVoidFunction>(GetPipelineCacheData) },
+        { "vkGetPrivateData", reinterpret_cast<PFN_vkVoidFunction>(GetPrivateData) },
         { "vkGetQueryPoolResults", reinterpret_cast<PFN_vkVoidFunction>(GetQueryPoolResults) },
         { "vkGetRenderAreaGranularity", reinterpret_cast<PFN_vkVoidFunction>(GetRenderAreaGranularity) },
+        { "vkGetSemaphoreCounterValue", reinterpret_cast<PFN_vkVoidFunction>(GetSemaphoreCounterValue) },
         { "vkGetSwapchainImagesKHR", reinterpret_cast<PFN_vkVoidFunction>(GetSwapchainImagesKHR) },
         { "vkInvalidateMappedMemoryRanges", reinterpret_cast<PFN_vkVoidFunction>(InvalidateMappedMemoryRanges) },
         { "vkMapMemory", reinterpret_cast<PFN_vkVoidFunction>(MapMemory) },
@@ -778,18 +931,23 @@ VKAPI_ATTR PFN_vkVoidFunction GetInstanceProcAddr(VkInstance instance, const cha
         { "vkQueueBindSparse", reinterpret_cast<PFN_vkVoidFunction>(QueueBindSparse) },
         { "vkQueuePresentKHR", reinterpret_cast<PFN_vkVoidFunction>(QueuePresentKHR) },
         { "vkQueueSubmit", reinterpret_cast<PFN_vkVoidFunction>(QueueSubmit) },
+        { "vkQueueSubmit2", reinterpret_cast<PFN_vkVoidFunction>(QueueSubmit2) },
         { "vkQueueWaitIdle", reinterpret_cast<PFN_vkVoidFunction>(QueueWaitIdle) },
         { "vkResetCommandBuffer", reinterpret_cast<PFN_vkVoidFunction>(ResetCommandBuffer) },
         { "vkResetCommandPool", reinterpret_cast<PFN_vkVoidFunction>(ResetCommandPool) },
         { "vkResetDescriptorPool", reinterpret_cast<PFN_vkVoidFunction>(ResetDescriptorPool) },
         { "vkResetEvent", reinterpret_cast<PFN_vkVoidFunction>(ResetEvent) },
         { "vkResetFences", reinterpret_cast<PFN_vkVoidFunction>(ResetFences) },
+        { "vkResetQueryPool", reinterpret_cast<PFN_vkVoidFunction>(ResetQueryPool) },
         { "vkSetEvent", reinterpret_cast<PFN_vkVoidFunction>(SetEvent) },
+        { "vkSetPrivateData", reinterpret_cast<PFN_vkVoidFunction>(SetPrivateData) },
+        { "vkSignalSemaphore", reinterpret_cast<PFN_vkVoidFunction>(SignalSemaphore) },
         { "vkTrimCommandPool", reinterpret_cast<PFN_vkVoidFunction>(TrimCommandPool) },
         { "vkUnmapMemory", reinterpret_cast<PFN_vkVoidFunction>(UnmapMemory) },
         { "vkUpdateDescriptorSetWithTemplate", reinterpret_cast<PFN_vkVoidFunction>(UpdateDescriptorSetWithTemplate) },
         { "vkUpdateDescriptorSets", reinterpret_cast<PFN_vkVoidFunction>(UpdateDescriptorSets) },
         { "vkWaitForFences", reinterpret_cast<PFN_vkVoidFunction>(WaitForFences) },
+        { "vkWaitSemaphores", reinterpret_cast<PFN_vkVoidFunction>(WaitSemaphores) },
     };
     // clang-format on
     constexpr size_t count = sizeof(hooks) / sizeof(hooks[0]);
@@ -963,6 +1121,10 @@ VKAPI_ATTR void DestroyQueryPool(VkDevice device, VkQueryPool queryPool, const V
 
 VKAPI_ATTR VkResult GetQueryPoolResults(VkDevice device, VkQueryPool queryPool, uint32_t firstQuery, uint32_t queryCount, size_t dataSize, void* pData, VkDeviceSize stride, VkQueryResultFlags flags) {
     return GetData(device).dispatch.GetQueryPoolResults(device, queryPool, firstQuery, queryCount, dataSize, pData, stride, flags);
+}
+
+VKAPI_ATTR void ResetQueryPool(VkDevice device, VkQueryPool queryPool, uint32_t firstQuery, uint32_t queryCount) {
+    GetData(device).dispatch.ResetQueryPool(device, queryPool, firstQuery, queryCount);
 }
 
 VKAPI_ATTR VkResult CreateBuffer(VkDevice device, const VkBufferCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkBuffer* pBuffer) {
@@ -1313,112 +1475,8 @@ VKAPI_ATTR void CmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t comma
     GetData(commandBuffer).dispatch.CmdExecuteCommands(commandBuffer, commandBufferCount, pCommandBuffers);
 }
 
-VKAPI_ATTR VkResult BindBufferMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindBufferMemoryInfo* pBindInfos) {
-    return GetData(device).dispatch.BindBufferMemory2(device, bindInfoCount, pBindInfos);
-}
-
-VKAPI_ATTR VkResult BindImageMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindImageMemoryInfo* pBindInfos) {
-    return GetData(device).dispatch.BindImageMemory2(device, bindInfoCount, pBindInfos);
-}
-
-VKAPI_ATTR void GetDeviceGroupPeerMemoryFeatures(VkDevice device, uint32_t heapIndex, uint32_t localDeviceIndex, uint32_t remoteDeviceIndex, VkPeerMemoryFeatureFlags* pPeerMemoryFeatures) {
-    GetData(device).dispatch.GetDeviceGroupPeerMemoryFeatures(device, heapIndex, localDeviceIndex, remoteDeviceIndex, pPeerMemoryFeatures);
-}
-
-VKAPI_ATTR void CmdSetDeviceMask(VkCommandBuffer commandBuffer, uint32_t deviceMask) {
-    GetData(commandBuffer).dispatch.CmdSetDeviceMask(commandBuffer, deviceMask);
-}
-
-VKAPI_ATTR void CmdDispatchBase(VkCommandBuffer commandBuffer, uint32_t baseGroupX, uint32_t baseGroupY, uint32_t baseGroupZ, uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) {
-    GetData(commandBuffer).dispatch.CmdDispatchBase(commandBuffer, baseGroupX, baseGroupY, baseGroupZ, groupCountX, groupCountY, groupCountZ);
-}
-
-VKAPI_ATTR VkResult EnumeratePhysicalDeviceGroups(VkInstance instance, uint32_t* pPhysicalDeviceGroupCount, VkPhysicalDeviceGroupProperties* pPhysicalDeviceGroupProperties) {
-    return GetData(instance).dispatch.EnumeratePhysicalDeviceGroups(instance, pPhysicalDeviceGroupCount, pPhysicalDeviceGroupProperties);
-}
-
-VKAPI_ATTR void GetImageMemoryRequirements2(VkDevice device, const VkImageMemoryRequirementsInfo2* pInfo, VkMemoryRequirements2* pMemoryRequirements) {
-    GetData(device).dispatch.GetImageMemoryRequirements2(device, pInfo, pMemoryRequirements);
-}
-
-VKAPI_ATTR void GetBufferMemoryRequirements2(VkDevice device, const VkBufferMemoryRequirementsInfo2* pInfo, VkMemoryRequirements2* pMemoryRequirements) {
-    GetData(device).dispatch.GetBufferMemoryRequirements2(device, pInfo, pMemoryRequirements);
-}
-
-VKAPI_ATTR void GetImageSparseMemoryRequirements2(VkDevice device, const VkImageSparseMemoryRequirementsInfo2* pInfo, uint32_t* pSparseMemoryRequirementCount, VkSparseImageMemoryRequirements2* pSparseMemoryRequirements) {
-    GetData(device).dispatch.GetImageSparseMemoryRequirements2(device, pInfo, pSparseMemoryRequirementCount, pSparseMemoryRequirements);
-}
-
-VKAPI_ATTR void GetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2* pFeatures) {
-    GetData(physicalDevice).dispatch.GetPhysicalDeviceFeatures2(physicalDevice, pFeatures);
-}
-
-VKAPI_ATTR void GetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties2* pProperties) {
-    GetData(physicalDevice).dispatch.GetPhysicalDeviceProperties2(physicalDevice, pProperties);
-}
-
-VKAPI_ATTR void GetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice, VkFormat format, VkFormatProperties2* pFormatProperties) {
-    GetData(physicalDevice).dispatch.GetPhysicalDeviceFormatProperties2(physicalDevice, format, pFormatProperties);
-}
-
-VKAPI_ATTR VkResult GetPhysicalDeviceImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2* pImageFormatInfo, VkImageFormatProperties2* pImageFormatProperties) {
-    return GetData(physicalDevice).dispatch.GetPhysicalDeviceImageFormatProperties2(physicalDevice, pImageFormatInfo, pImageFormatProperties);
-}
-
-VKAPI_ATTR void GetPhysicalDeviceQueueFamilyProperties2(VkPhysicalDevice physicalDevice, uint32_t* pQueueFamilyPropertyCount, VkQueueFamilyProperties2* pQueueFamilyProperties) {
-    GetData(physicalDevice).dispatch.GetPhysicalDeviceQueueFamilyProperties2(physicalDevice, pQueueFamilyPropertyCount, pQueueFamilyProperties);
-}
-
-VKAPI_ATTR void GetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties2* pMemoryProperties) {
-    GetData(physicalDevice).dispatch.GetPhysicalDeviceMemoryProperties2(physicalDevice, pMemoryProperties);
-}
-
-VKAPI_ATTR void GetPhysicalDeviceSparseImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSparseImageFormatInfo2* pFormatInfo, uint32_t* pPropertyCount, VkSparseImageFormatProperties2* pProperties) {
-    GetData(physicalDevice).dispatch.GetPhysicalDeviceSparseImageFormatProperties2(physicalDevice, pFormatInfo, pPropertyCount, pProperties);
-}
-
-VKAPI_ATTR void TrimCommandPool(VkDevice device, VkCommandPool commandPool, VkCommandPoolTrimFlags flags) {
-    GetData(device).dispatch.TrimCommandPool(device, commandPool, flags);
-}
-
-VKAPI_ATTR void GetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2* pQueueInfo, VkQueue* pQueue) {
-    GetData(device).dispatch.GetDeviceQueue2(device, pQueueInfo, pQueue);
-}
-
-VKAPI_ATTR VkResult CreateSamplerYcbcrConversion(VkDevice device, const VkSamplerYcbcrConversionCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSamplerYcbcrConversion* pYcbcrConversion) {
-    return GetData(device).dispatch.CreateSamplerYcbcrConversion(device, pCreateInfo, pAllocator, pYcbcrConversion);
-}
-
-VKAPI_ATTR void DestroySamplerYcbcrConversion(VkDevice device, VkSamplerYcbcrConversion ycbcrConversion, const VkAllocationCallbacks* pAllocator) {
-    GetData(device).dispatch.DestroySamplerYcbcrConversion(device, ycbcrConversion, pAllocator);
-}
-
-VKAPI_ATTR VkResult CreateDescriptorUpdateTemplate(VkDevice device, const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate) {
-    return GetData(device).dispatch.CreateDescriptorUpdateTemplate(device, pCreateInfo, pAllocator, pDescriptorUpdateTemplate);
-}
-
-VKAPI_ATTR void DestroyDescriptorUpdateTemplate(VkDevice device, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const VkAllocationCallbacks* pAllocator) {
-    GetData(device).dispatch.DestroyDescriptorUpdateTemplate(device, descriptorUpdateTemplate, pAllocator);
-}
-
-VKAPI_ATTR void UpdateDescriptorSetWithTemplate(VkDevice device, VkDescriptorSet descriptorSet, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void* pData) {
-    GetData(device).dispatch.UpdateDescriptorSetWithTemplate(device, descriptorSet, descriptorUpdateTemplate, pData);
-}
-
-VKAPI_ATTR void GetPhysicalDeviceExternalBufferProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalBufferInfo* pExternalBufferInfo, VkExternalBufferProperties* pExternalBufferProperties) {
-    GetData(physicalDevice).dispatch.GetPhysicalDeviceExternalBufferProperties(physicalDevice, pExternalBufferInfo, pExternalBufferProperties);
-}
-
-VKAPI_ATTR void GetPhysicalDeviceExternalFenceProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalFenceInfo* pExternalFenceInfo, VkExternalFenceProperties* pExternalFenceProperties) {
-    GetData(physicalDevice).dispatch.GetPhysicalDeviceExternalFenceProperties(physicalDevice, pExternalFenceInfo, pExternalFenceProperties);
-}
-
-VKAPI_ATTR void GetPhysicalDeviceExternalSemaphoreProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalSemaphoreInfo* pExternalSemaphoreInfo, VkExternalSemaphoreProperties* pExternalSemaphoreProperties) {
-    GetData(physicalDevice).dispatch.GetPhysicalDeviceExternalSemaphoreProperties(physicalDevice, pExternalSemaphoreInfo, pExternalSemaphoreProperties);
-}
-
-VKAPI_ATTR void GetDescriptorSetLayoutSupport(VkDevice device, const VkDescriptorSetLayoutCreateInfo* pCreateInfo, VkDescriptorSetLayoutSupport* pSupport) {
-    GetData(device).dispatch.GetDescriptorSetLayoutSupport(device, pCreateInfo, pSupport);
+VKAPI_ATTR VkResult CreateAndroidSurfaceKHR(VkInstance instance, const VkAndroidSurfaceCreateInfoKHR* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface) {
+    return GetData(instance).dispatch.CreateAndroidSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
 }
 
 VKAPI_ATTR void DestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surface, const VkAllocationCallbacks* pAllocator) {
@@ -1461,6 +1519,70 @@ VKAPI_ATTR VkResult QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPres
     return GetData(queue).dispatch.QueuePresentKHR(queue, pPresentInfo);
 }
 
+VKAPI_ATTR void GetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2* pFeatures) {
+    GetData(physicalDevice).dispatch.GetPhysicalDeviceFeatures2(physicalDevice, pFeatures);
+}
+
+VKAPI_ATTR void GetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties2* pProperties) {
+    GetData(physicalDevice).dispatch.GetPhysicalDeviceProperties2(physicalDevice, pProperties);
+}
+
+VKAPI_ATTR void GetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice, VkFormat format, VkFormatProperties2* pFormatProperties) {
+    GetData(physicalDevice).dispatch.GetPhysicalDeviceFormatProperties2(physicalDevice, format, pFormatProperties);
+}
+
+VKAPI_ATTR VkResult GetPhysicalDeviceImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2* pImageFormatInfo, VkImageFormatProperties2* pImageFormatProperties) {
+    return GetData(physicalDevice).dispatch.GetPhysicalDeviceImageFormatProperties2(physicalDevice, pImageFormatInfo, pImageFormatProperties);
+}
+
+VKAPI_ATTR void GetPhysicalDeviceQueueFamilyProperties2(VkPhysicalDevice physicalDevice, uint32_t* pQueueFamilyPropertyCount, VkQueueFamilyProperties2* pQueueFamilyProperties) {
+    GetData(physicalDevice).dispatch.GetPhysicalDeviceQueueFamilyProperties2(physicalDevice, pQueueFamilyPropertyCount, pQueueFamilyProperties);
+}
+
+VKAPI_ATTR void GetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties2* pMemoryProperties) {
+    GetData(physicalDevice).dispatch.GetPhysicalDeviceMemoryProperties2(physicalDevice, pMemoryProperties);
+}
+
+VKAPI_ATTR void GetPhysicalDeviceSparseImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSparseImageFormatInfo2* pFormatInfo, uint32_t* pPropertyCount, VkSparseImageFormatProperties2* pProperties) {
+    GetData(physicalDevice).dispatch.GetPhysicalDeviceSparseImageFormatProperties2(physicalDevice, pFormatInfo, pPropertyCount, pProperties);
+}
+
+VKAPI_ATTR void TrimCommandPool(VkDevice device, VkCommandPool commandPool, VkCommandPoolTrimFlags flags) {
+    GetData(device).dispatch.TrimCommandPool(device, commandPool, flags);
+}
+
+VKAPI_ATTR void GetPhysicalDeviceExternalBufferProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalBufferInfo* pExternalBufferInfo, VkExternalBufferProperties* pExternalBufferProperties) {
+    GetData(physicalDevice).dispatch.GetPhysicalDeviceExternalBufferProperties(physicalDevice, pExternalBufferInfo, pExternalBufferProperties);
+}
+
+VKAPI_ATTR void GetPhysicalDeviceExternalSemaphoreProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalSemaphoreInfo* pExternalSemaphoreInfo, VkExternalSemaphoreProperties* pExternalSemaphoreProperties) {
+    GetData(physicalDevice).dispatch.GetPhysicalDeviceExternalSemaphoreProperties(physicalDevice, pExternalSemaphoreInfo, pExternalSemaphoreProperties);
+}
+
+VKAPI_ATTR void GetPhysicalDeviceExternalFenceProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalFenceInfo* pExternalFenceInfo, VkExternalFenceProperties* pExternalFenceProperties) {
+    GetData(physicalDevice).dispatch.GetPhysicalDeviceExternalFenceProperties(physicalDevice, pExternalFenceInfo, pExternalFenceProperties);
+}
+
+VKAPI_ATTR VkResult EnumeratePhysicalDeviceGroups(VkInstance instance, uint32_t* pPhysicalDeviceGroupCount, VkPhysicalDeviceGroupProperties* pPhysicalDeviceGroupProperties) {
+    return GetData(instance).dispatch.EnumeratePhysicalDeviceGroups(instance, pPhysicalDeviceGroupCount, pPhysicalDeviceGroupProperties);
+}
+
+VKAPI_ATTR void GetDeviceGroupPeerMemoryFeatures(VkDevice device, uint32_t heapIndex, uint32_t localDeviceIndex, uint32_t remoteDeviceIndex, VkPeerMemoryFeatureFlags* pPeerMemoryFeatures) {
+    GetData(device).dispatch.GetDeviceGroupPeerMemoryFeatures(device, heapIndex, localDeviceIndex, remoteDeviceIndex, pPeerMemoryFeatures);
+}
+
+VKAPI_ATTR VkResult BindBufferMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindBufferMemoryInfo* pBindInfos) {
+    return GetData(device).dispatch.BindBufferMemory2(device, bindInfoCount, pBindInfos);
+}
+
+VKAPI_ATTR VkResult BindImageMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindImageMemoryInfo* pBindInfos) {
+    return GetData(device).dispatch.BindImageMemory2(device, bindInfoCount, pBindInfos);
+}
+
+VKAPI_ATTR void CmdSetDeviceMask(VkCommandBuffer commandBuffer, uint32_t deviceMask) {
+    GetData(commandBuffer).dispatch.CmdSetDeviceMask(commandBuffer, deviceMask);
+}
+
 VKAPI_ATTR VkResult GetDeviceGroupPresentCapabilitiesKHR(VkDevice device, VkDeviceGroupPresentCapabilitiesKHR* pDeviceGroupPresentCapabilities) {
     return GetData(device).dispatch.GetDeviceGroupPresentCapabilitiesKHR(device, pDeviceGroupPresentCapabilities);
 }
@@ -1469,16 +1591,96 @@ VKAPI_ATTR VkResult GetDeviceGroupSurfacePresentModesKHR(VkDevice device, VkSurf
     return GetData(device).dispatch.GetDeviceGroupSurfacePresentModesKHR(device, surface, pModes);
 }
 
-VKAPI_ATTR VkResult GetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, uint32_t* pRectCount, VkRect2D* pRects) {
-    return GetData(physicalDevice).dispatch.GetPhysicalDevicePresentRectanglesKHR(physicalDevice, surface, pRectCount, pRects);
-}
-
 VKAPI_ATTR VkResult AcquireNextImage2KHR(VkDevice device, const VkAcquireNextImageInfoKHR* pAcquireInfo, uint32_t* pImageIndex) {
     return GetData(device).dispatch.AcquireNextImage2KHR(device, pAcquireInfo, pImageIndex);
 }
 
-VKAPI_ATTR VkResult CreateAndroidSurfaceKHR(VkInstance instance, const VkAndroidSurfaceCreateInfoKHR* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface) {
-    return GetData(instance).dispatch.CreateAndroidSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
+VKAPI_ATTR void CmdDispatchBase(VkCommandBuffer commandBuffer, uint32_t baseGroupX, uint32_t baseGroupY, uint32_t baseGroupZ, uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) {
+    GetData(commandBuffer).dispatch.CmdDispatchBase(commandBuffer, baseGroupX, baseGroupY, baseGroupZ, groupCountX, groupCountY, groupCountZ);
+}
+
+VKAPI_ATTR VkResult GetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, uint32_t* pRectCount, VkRect2D* pRects) {
+    return GetData(physicalDevice).dispatch.GetPhysicalDevicePresentRectanglesKHR(physicalDevice, surface, pRectCount, pRects);
+}
+
+VKAPI_ATTR VkResult CreateDescriptorUpdateTemplate(VkDevice device, const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate) {
+    return GetData(device).dispatch.CreateDescriptorUpdateTemplate(device, pCreateInfo, pAllocator, pDescriptorUpdateTemplate);
+}
+
+VKAPI_ATTR void DestroyDescriptorUpdateTemplate(VkDevice device, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const VkAllocationCallbacks* pAllocator) {
+    GetData(device).dispatch.DestroyDescriptorUpdateTemplate(device, descriptorUpdateTemplate, pAllocator);
+}
+
+VKAPI_ATTR void UpdateDescriptorSetWithTemplate(VkDevice device, VkDescriptorSet descriptorSet, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void* pData) {
+    GetData(device).dispatch.UpdateDescriptorSetWithTemplate(device, descriptorSet, descriptorUpdateTemplate, pData);
+}
+
+VKAPI_ATTR void GetBufferMemoryRequirements2(VkDevice device, const VkBufferMemoryRequirementsInfo2* pInfo, VkMemoryRequirements2* pMemoryRequirements) {
+    GetData(device).dispatch.GetBufferMemoryRequirements2(device, pInfo, pMemoryRequirements);
+}
+
+VKAPI_ATTR void GetImageMemoryRequirements2(VkDevice device, const VkImageMemoryRequirementsInfo2* pInfo, VkMemoryRequirements2* pMemoryRequirements) {
+    GetData(device).dispatch.GetImageMemoryRequirements2(device, pInfo, pMemoryRequirements);
+}
+
+VKAPI_ATTR void GetImageSparseMemoryRequirements2(VkDevice device, const VkImageSparseMemoryRequirementsInfo2* pInfo, uint32_t* pSparseMemoryRequirementCount, VkSparseImageMemoryRequirements2* pSparseMemoryRequirements) {
+    GetData(device).dispatch.GetImageSparseMemoryRequirements2(device, pInfo, pSparseMemoryRequirementCount, pSparseMemoryRequirements);
+}
+
+VKAPI_ATTR void GetDeviceBufferMemoryRequirements(VkDevice device, const VkDeviceBufferMemoryRequirements* pInfo, VkMemoryRequirements2* pMemoryRequirements) {
+    GetData(device).dispatch.GetDeviceBufferMemoryRequirements(device, pInfo, pMemoryRequirements);
+}
+
+VKAPI_ATTR void GetDeviceImageMemoryRequirements(VkDevice device, const VkDeviceImageMemoryRequirements* pInfo, VkMemoryRequirements2* pMemoryRequirements) {
+    GetData(device).dispatch.GetDeviceImageMemoryRequirements(device, pInfo, pMemoryRequirements);
+}
+
+VKAPI_ATTR void GetDeviceImageSparseMemoryRequirements(VkDevice device, const VkDeviceImageMemoryRequirements* pInfo, uint32_t* pSparseMemoryRequirementCount, VkSparseImageMemoryRequirements2* pSparseMemoryRequirements) {
+    GetData(device).dispatch.GetDeviceImageSparseMemoryRequirements(device, pInfo, pSparseMemoryRequirementCount, pSparseMemoryRequirements);
+}
+
+VKAPI_ATTR VkResult CreateSamplerYcbcrConversion(VkDevice device, const VkSamplerYcbcrConversionCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSamplerYcbcrConversion* pYcbcrConversion) {
+    return GetData(device).dispatch.CreateSamplerYcbcrConversion(device, pCreateInfo, pAllocator, pYcbcrConversion);
+}
+
+VKAPI_ATTR void DestroySamplerYcbcrConversion(VkDevice device, VkSamplerYcbcrConversion ycbcrConversion, const VkAllocationCallbacks* pAllocator) {
+    GetData(device).dispatch.DestroySamplerYcbcrConversion(device, ycbcrConversion, pAllocator);
+}
+
+VKAPI_ATTR void GetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2* pQueueInfo, VkQueue* pQueue) {
+    GetData(device).dispatch.GetDeviceQueue2(device, pQueueInfo, pQueue);
+}
+
+VKAPI_ATTR void GetDescriptorSetLayoutSupport(VkDevice device, const VkDescriptorSetLayoutCreateInfo* pCreateInfo, VkDescriptorSetLayoutSupport* pSupport) {
+    GetData(device).dispatch.GetDescriptorSetLayoutSupport(device, pCreateInfo, pSupport);
+}
+
+VKAPI_ATTR VkResult CreateRenderPass2(VkDevice device, const VkRenderPassCreateInfo2* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkRenderPass* pRenderPass) {
+    return GetData(device).dispatch.CreateRenderPass2(device, pCreateInfo, pAllocator, pRenderPass);
+}
+
+VKAPI_ATTR void CmdBeginRenderPass2(VkCommandBuffer commandBuffer, const VkRenderPassBeginInfo* pRenderPassBegin, const VkSubpassBeginInfo* pSubpassBeginInfo) {
+    GetData(commandBuffer).dispatch.CmdBeginRenderPass2(commandBuffer, pRenderPassBegin, pSubpassBeginInfo);
+}
+
+VKAPI_ATTR void CmdNextSubpass2(VkCommandBuffer commandBuffer, const VkSubpassBeginInfo* pSubpassBeginInfo, const VkSubpassEndInfo* pSubpassEndInfo) {
+    GetData(commandBuffer).dispatch.CmdNextSubpass2(commandBuffer, pSubpassBeginInfo, pSubpassEndInfo);
+}
+
+VKAPI_ATTR void CmdEndRenderPass2(VkCommandBuffer commandBuffer, const VkSubpassEndInfo* pSubpassEndInfo) {
+    GetData(commandBuffer).dispatch.CmdEndRenderPass2(commandBuffer, pSubpassEndInfo);
+}
+
+VKAPI_ATTR VkResult GetSemaphoreCounterValue(VkDevice device, VkSemaphore semaphore, uint64_t* pValue) {
+    return GetData(device).dispatch.GetSemaphoreCounterValue(device, semaphore, pValue);
+}
+
+VKAPI_ATTR VkResult WaitSemaphores(VkDevice device, const VkSemaphoreWaitInfo* pWaitInfo, uint64_t timeout) {
+    return GetData(device).dispatch.WaitSemaphores(device, pWaitInfo, timeout);
+}
+
+VKAPI_ATTR VkResult SignalSemaphore(VkDevice device, const VkSemaphoreSignalInfo* pSignalInfo) {
+    return GetData(device).dispatch.SignalSemaphore(device, pSignalInfo);
 }
 
 VKAPI_ATTR VkResult GetAndroidHardwareBufferPropertiesANDROID(VkDevice device, const struct AHardwareBuffer* buffer, VkAndroidHardwareBufferPropertiesANDROID* pProperties) {
@@ -1487,6 +1689,162 @@ VKAPI_ATTR VkResult GetAndroidHardwareBufferPropertiesANDROID(VkDevice device, c
 
 VKAPI_ATTR VkResult GetMemoryAndroidHardwareBufferANDROID(VkDevice device, const VkMemoryGetAndroidHardwareBufferInfoANDROID* pInfo, struct AHardwareBuffer** pBuffer) {
     return GetData(device).dispatch.GetMemoryAndroidHardwareBufferANDROID(device, pInfo, pBuffer);
+}
+
+VKAPI_ATTR void CmdDrawIndirectCount(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride) {
+    GetData(commandBuffer).dispatch.CmdDrawIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+}
+
+VKAPI_ATTR void CmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride) {
+    GetData(commandBuffer).dispatch.CmdDrawIndexedIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+}
+
+VKAPI_ATTR uint64_t GetBufferOpaqueCaptureAddress(VkDevice device, const VkBufferDeviceAddressInfo* pInfo) {
+    return GetData(device).dispatch.GetBufferOpaqueCaptureAddress(device, pInfo);
+}
+
+VKAPI_ATTR VkDeviceAddress GetBufferDeviceAddress(VkDevice device, const VkBufferDeviceAddressInfo* pInfo) {
+    return GetData(device).dispatch.GetBufferDeviceAddress(device, pInfo);
+}
+
+VKAPI_ATTR uint64_t GetDeviceMemoryOpaqueCaptureAddress(VkDevice device, const VkDeviceMemoryOpaqueCaptureAddressInfo* pInfo) {
+    return GetData(device).dispatch.GetDeviceMemoryOpaqueCaptureAddress(device, pInfo);
+}
+
+VKAPI_ATTR VkResult GetPhysicalDeviceToolProperties(VkPhysicalDevice physicalDevice, uint32_t* pToolCount, VkPhysicalDeviceToolProperties* pToolProperties) {
+    return GetData(physicalDevice).dispatch.GetPhysicalDeviceToolProperties(physicalDevice, pToolCount, pToolProperties);
+}
+
+VKAPI_ATTR void CmdSetCullMode(VkCommandBuffer commandBuffer, VkCullModeFlags cullMode) {
+    GetData(commandBuffer).dispatch.CmdSetCullMode(commandBuffer, cullMode);
+}
+
+VKAPI_ATTR void CmdSetFrontFace(VkCommandBuffer commandBuffer, VkFrontFace frontFace) {
+    GetData(commandBuffer).dispatch.CmdSetFrontFace(commandBuffer, frontFace);
+}
+
+VKAPI_ATTR void CmdSetPrimitiveTopology(VkCommandBuffer commandBuffer, VkPrimitiveTopology primitiveTopology) {
+    GetData(commandBuffer).dispatch.CmdSetPrimitiveTopology(commandBuffer, primitiveTopology);
+}
+
+VKAPI_ATTR void CmdSetViewportWithCount(VkCommandBuffer commandBuffer, uint32_t viewportCount, const VkViewport* pViewports) {
+    GetData(commandBuffer).dispatch.CmdSetViewportWithCount(commandBuffer, viewportCount, pViewports);
+}
+
+VKAPI_ATTR void CmdSetScissorWithCount(VkCommandBuffer commandBuffer, uint32_t scissorCount, const VkRect2D* pScissors) {
+    GetData(commandBuffer).dispatch.CmdSetScissorWithCount(commandBuffer, scissorCount, pScissors);
+}
+
+VKAPI_ATTR void CmdBindVertexBuffers2(VkCommandBuffer commandBuffer, uint32_t firstBinding, uint32_t bindingCount, const VkBuffer* pBuffers, const VkDeviceSize* pOffsets, const VkDeviceSize* pSizes, const VkDeviceSize* pStrides) {
+    GetData(commandBuffer).dispatch.CmdBindVertexBuffers2(commandBuffer, firstBinding, bindingCount, pBuffers, pOffsets, pSizes, pStrides);
+}
+
+VKAPI_ATTR void CmdSetDepthTestEnable(VkCommandBuffer commandBuffer, VkBool32 depthTestEnable) {
+    GetData(commandBuffer).dispatch.CmdSetDepthTestEnable(commandBuffer, depthTestEnable);
+}
+
+VKAPI_ATTR void CmdSetDepthWriteEnable(VkCommandBuffer commandBuffer, VkBool32 depthWriteEnable) {
+    GetData(commandBuffer).dispatch.CmdSetDepthWriteEnable(commandBuffer, depthWriteEnable);
+}
+
+VKAPI_ATTR void CmdSetDepthCompareOp(VkCommandBuffer commandBuffer, VkCompareOp depthCompareOp) {
+    GetData(commandBuffer).dispatch.CmdSetDepthCompareOp(commandBuffer, depthCompareOp);
+}
+
+VKAPI_ATTR void CmdSetDepthBoundsTestEnable(VkCommandBuffer commandBuffer, VkBool32 depthBoundsTestEnable) {
+    GetData(commandBuffer).dispatch.CmdSetDepthBoundsTestEnable(commandBuffer, depthBoundsTestEnable);
+}
+
+VKAPI_ATTR void CmdSetStencilTestEnable(VkCommandBuffer commandBuffer, VkBool32 stencilTestEnable) {
+    GetData(commandBuffer).dispatch.CmdSetStencilTestEnable(commandBuffer, stencilTestEnable);
+}
+
+VKAPI_ATTR void CmdSetStencilOp(VkCommandBuffer commandBuffer, VkStencilFaceFlags faceMask, VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp) {
+    GetData(commandBuffer).dispatch.CmdSetStencilOp(commandBuffer, faceMask, failOp, passOp, depthFailOp, compareOp);
+}
+
+VKAPI_ATTR void CmdSetRasterizerDiscardEnable(VkCommandBuffer commandBuffer, VkBool32 rasterizerDiscardEnable) {
+    GetData(commandBuffer).dispatch.CmdSetRasterizerDiscardEnable(commandBuffer, rasterizerDiscardEnable);
+}
+
+VKAPI_ATTR void CmdSetDepthBiasEnable(VkCommandBuffer commandBuffer, VkBool32 depthBiasEnable) {
+    GetData(commandBuffer).dispatch.CmdSetDepthBiasEnable(commandBuffer, depthBiasEnable);
+}
+
+VKAPI_ATTR void CmdSetPrimitiveRestartEnable(VkCommandBuffer commandBuffer, VkBool32 primitiveRestartEnable) {
+    GetData(commandBuffer).dispatch.CmdSetPrimitiveRestartEnable(commandBuffer, primitiveRestartEnable);
+}
+
+VKAPI_ATTR VkResult CreatePrivateDataSlot(VkDevice device, const VkPrivateDataSlotCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkPrivateDataSlot* pPrivateDataSlot) {
+    return GetData(device).dispatch.CreatePrivateDataSlot(device, pCreateInfo, pAllocator, pPrivateDataSlot);
+}
+
+VKAPI_ATTR void DestroyPrivateDataSlot(VkDevice device, VkPrivateDataSlot privateDataSlot, const VkAllocationCallbacks* pAllocator) {
+    GetData(device).dispatch.DestroyPrivateDataSlot(device, privateDataSlot, pAllocator);
+}
+
+VKAPI_ATTR VkResult SetPrivateData(VkDevice device, VkObjectType objectType, uint64_t objectHandle, VkPrivateDataSlot privateDataSlot, uint64_t data) {
+    return GetData(device).dispatch.SetPrivateData(device, objectType, objectHandle, privateDataSlot, data);
+}
+
+VKAPI_ATTR void GetPrivateData(VkDevice device, VkObjectType objectType, uint64_t objectHandle, VkPrivateDataSlot privateDataSlot, uint64_t* pData) {
+    GetData(device).dispatch.GetPrivateData(device, objectType, objectHandle, privateDataSlot, pData);
+}
+
+VKAPI_ATTR void CmdCopyBuffer2(VkCommandBuffer commandBuffer, const VkCopyBufferInfo2* pCopyBufferInfo) {
+    GetData(commandBuffer).dispatch.CmdCopyBuffer2(commandBuffer, pCopyBufferInfo);
+}
+
+VKAPI_ATTR void CmdCopyImage2(VkCommandBuffer commandBuffer, const VkCopyImageInfo2* pCopyImageInfo) {
+    GetData(commandBuffer).dispatch.CmdCopyImage2(commandBuffer, pCopyImageInfo);
+}
+
+VKAPI_ATTR void CmdBlitImage2(VkCommandBuffer commandBuffer, const VkBlitImageInfo2* pBlitImageInfo) {
+    GetData(commandBuffer).dispatch.CmdBlitImage2(commandBuffer, pBlitImageInfo);
+}
+
+VKAPI_ATTR void CmdCopyBufferToImage2(VkCommandBuffer commandBuffer, const VkCopyBufferToImageInfo2* pCopyBufferToImageInfo) {
+    GetData(commandBuffer).dispatch.CmdCopyBufferToImage2(commandBuffer, pCopyBufferToImageInfo);
+}
+
+VKAPI_ATTR void CmdCopyImageToBuffer2(VkCommandBuffer commandBuffer, const VkCopyImageToBufferInfo2* pCopyImageToBufferInfo) {
+    GetData(commandBuffer).dispatch.CmdCopyImageToBuffer2(commandBuffer, pCopyImageToBufferInfo);
+}
+
+VKAPI_ATTR void CmdResolveImage2(VkCommandBuffer commandBuffer, const VkResolveImageInfo2* pResolveImageInfo) {
+    GetData(commandBuffer).dispatch.CmdResolveImage2(commandBuffer, pResolveImageInfo);
+}
+
+VKAPI_ATTR void CmdSetEvent2(VkCommandBuffer commandBuffer, VkEvent event, const VkDependencyInfo* pDependencyInfo) {
+    GetData(commandBuffer).dispatch.CmdSetEvent2(commandBuffer, event, pDependencyInfo);
+}
+
+VKAPI_ATTR void CmdResetEvent2(VkCommandBuffer commandBuffer, VkEvent event, VkPipelineStageFlags2 stageMask) {
+    GetData(commandBuffer).dispatch.CmdResetEvent2(commandBuffer, event, stageMask);
+}
+
+VKAPI_ATTR void CmdWaitEvents2(VkCommandBuffer commandBuffer, uint32_t eventCount, const VkEvent* pEvents, const VkDependencyInfo* pDependencyInfos) {
+    GetData(commandBuffer).dispatch.CmdWaitEvents2(commandBuffer, eventCount, pEvents, pDependencyInfos);
+}
+
+VKAPI_ATTR void CmdPipelineBarrier2(VkCommandBuffer commandBuffer, const VkDependencyInfo* pDependencyInfo) {
+    GetData(commandBuffer).dispatch.CmdPipelineBarrier2(commandBuffer, pDependencyInfo);
+}
+
+VKAPI_ATTR VkResult QueueSubmit2(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2* pSubmits, VkFence fence) {
+    return GetData(queue).dispatch.QueueSubmit2(queue, submitCount, pSubmits, fence);
+}
+
+VKAPI_ATTR void CmdWriteTimestamp2(VkCommandBuffer commandBuffer, VkPipelineStageFlags2 stage, VkQueryPool queryPool, uint32_t query) {
+    GetData(commandBuffer).dispatch.CmdWriteTimestamp2(commandBuffer, stage, queryPool, query);
+}
+
+VKAPI_ATTR void CmdBeginRendering(VkCommandBuffer commandBuffer, const VkRenderingInfo* pRenderingInfo) {
+    GetData(commandBuffer).dispatch.CmdBeginRendering(commandBuffer, pRenderingInfo);
+}
+
+VKAPI_ATTR void CmdEndRendering(VkCommandBuffer commandBuffer) {
+    GetData(commandBuffer).dispatch.CmdEndRendering(commandBuffer);
 }
 
 
@@ -1562,6 +1920,11 @@ VKAPI_ATTR VkResult vkCreateDevice(VkPhysicalDevice physicalDevice, const VkDevi
 __attribute__((visibility("default")))
 VKAPI_ATTR void vkDestroyDevice(VkDevice device, const VkAllocationCallbacks* pAllocator) {
     vulkan::api::DestroyDevice(device, pAllocator);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkEnumerateInstanceVersion(uint32_t* pApiVersion) {
+    return vulkan::api::EnumerateInstanceVersion(pApiVersion);
 }
 
 __attribute__((visibility("default")))
@@ -1747,6 +2110,11 @@ VKAPI_ATTR void vkDestroyQueryPool(VkDevice device, VkQueryPool queryPool, const
 __attribute__((visibility("default")))
 VKAPI_ATTR VkResult vkGetQueryPoolResults(VkDevice device, VkQueryPool queryPool, uint32_t firstQuery, uint32_t queryCount, size_t dataSize, void* pData, VkDeviceSize stride, VkQueryResultFlags flags) {
     return vulkan::api::GetQueryPoolResults(device, queryPool, firstQuery, queryCount, dataSize, pData, stride, flags);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkResetQueryPool(VkDevice device, VkQueryPool queryPool, uint32_t firstQuery, uint32_t queryCount) {
+    vulkan::api::ResetQueryPool(device, queryPool, firstQuery, queryCount);
 }
 
 __attribute__((visibility("default")))
@@ -2185,143 +2553,8 @@ VKAPI_ATTR void vkCmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t com
 }
 
 __attribute__((visibility("default")))
-VKAPI_ATTR VkResult vkEnumerateInstanceVersion(uint32_t* pApiVersion) {
-    return vulkan::api::EnumerateInstanceVersion(pApiVersion);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR VkResult vkBindBufferMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindBufferMemoryInfo* pBindInfos) {
-    return vulkan::api::BindBufferMemory2(device, bindInfoCount, pBindInfos);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR VkResult vkBindImageMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindImageMemoryInfo* pBindInfos) {
-    return vulkan::api::BindImageMemory2(device, bindInfoCount, pBindInfos);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetDeviceGroupPeerMemoryFeatures(VkDevice device, uint32_t heapIndex, uint32_t localDeviceIndex, uint32_t remoteDeviceIndex, VkPeerMemoryFeatureFlags* pPeerMemoryFeatures) {
-    vulkan::api::GetDeviceGroupPeerMemoryFeatures(device, heapIndex, localDeviceIndex, remoteDeviceIndex, pPeerMemoryFeatures);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkCmdSetDeviceMask(VkCommandBuffer commandBuffer, uint32_t deviceMask) {
-    vulkan::api::CmdSetDeviceMask(commandBuffer, deviceMask);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkCmdDispatchBase(VkCommandBuffer commandBuffer, uint32_t baseGroupX, uint32_t baseGroupY, uint32_t baseGroupZ, uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) {
-    vulkan::api::CmdDispatchBase(commandBuffer, baseGroupX, baseGroupY, baseGroupZ, groupCountX, groupCountY, groupCountZ);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR VkResult vkEnumeratePhysicalDeviceGroups(VkInstance instance, uint32_t* pPhysicalDeviceGroupCount, VkPhysicalDeviceGroupProperties* pPhysicalDeviceGroupProperties) {
-    return vulkan::api::EnumeratePhysicalDeviceGroups(instance, pPhysicalDeviceGroupCount, pPhysicalDeviceGroupProperties);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetImageMemoryRequirements2(VkDevice device, const VkImageMemoryRequirementsInfo2* pInfo, VkMemoryRequirements2* pMemoryRequirements) {
-    vulkan::api::GetImageMemoryRequirements2(device, pInfo, pMemoryRequirements);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetBufferMemoryRequirements2(VkDevice device, const VkBufferMemoryRequirementsInfo2* pInfo, VkMemoryRequirements2* pMemoryRequirements) {
-    vulkan::api::GetBufferMemoryRequirements2(device, pInfo, pMemoryRequirements);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetImageSparseMemoryRequirements2(VkDevice device, const VkImageSparseMemoryRequirementsInfo2* pInfo, uint32_t* pSparseMemoryRequirementCount, VkSparseImageMemoryRequirements2* pSparseMemoryRequirements) {
-    vulkan::api::GetImageSparseMemoryRequirements2(device, pInfo, pSparseMemoryRequirementCount, pSparseMemoryRequirements);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2* pFeatures) {
-    vulkan::api::GetPhysicalDeviceFeatures2(physicalDevice, pFeatures);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties2* pProperties) {
-    vulkan::api::GetPhysicalDeviceProperties2(physicalDevice, pProperties);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice, VkFormat format, VkFormatProperties2* pFormatProperties) {
-    vulkan::api::GetPhysicalDeviceFormatProperties2(physicalDevice, format, pFormatProperties);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR VkResult vkGetPhysicalDeviceImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2* pImageFormatInfo, VkImageFormatProperties2* pImageFormatProperties) {
-    return vulkan::api::GetPhysicalDeviceImageFormatProperties2(physicalDevice, pImageFormatInfo, pImageFormatProperties);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetPhysicalDeviceQueueFamilyProperties2(VkPhysicalDevice physicalDevice, uint32_t* pQueueFamilyPropertyCount, VkQueueFamilyProperties2* pQueueFamilyProperties) {
-    vulkan::api::GetPhysicalDeviceQueueFamilyProperties2(physicalDevice, pQueueFamilyPropertyCount, pQueueFamilyProperties);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties2* pMemoryProperties) {
-    vulkan::api::GetPhysicalDeviceMemoryProperties2(physicalDevice, pMemoryProperties);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetPhysicalDeviceSparseImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSparseImageFormatInfo2* pFormatInfo, uint32_t* pPropertyCount, VkSparseImageFormatProperties2* pProperties) {
-    vulkan::api::GetPhysicalDeviceSparseImageFormatProperties2(physicalDevice, pFormatInfo, pPropertyCount, pProperties);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkTrimCommandPool(VkDevice device, VkCommandPool commandPool, VkCommandPoolTrimFlags flags) {
-    vulkan::api::TrimCommandPool(device, commandPool, flags);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2* pQueueInfo, VkQueue* pQueue) {
-    vulkan::api::GetDeviceQueue2(device, pQueueInfo, pQueue);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR VkResult vkCreateSamplerYcbcrConversion(VkDevice device, const VkSamplerYcbcrConversionCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSamplerYcbcrConversion* pYcbcrConversion) {
-    return vulkan::api::CreateSamplerYcbcrConversion(device, pCreateInfo, pAllocator, pYcbcrConversion);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkDestroySamplerYcbcrConversion(VkDevice device, VkSamplerYcbcrConversion ycbcrConversion, const VkAllocationCallbacks* pAllocator) {
-    vulkan::api::DestroySamplerYcbcrConversion(device, ycbcrConversion, pAllocator);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR VkResult vkCreateDescriptorUpdateTemplate(VkDevice device, const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate) {
-    return vulkan::api::CreateDescriptorUpdateTemplate(device, pCreateInfo, pAllocator, pDescriptorUpdateTemplate);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkDestroyDescriptorUpdateTemplate(VkDevice device, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const VkAllocationCallbacks* pAllocator) {
-    vulkan::api::DestroyDescriptorUpdateTemplate(device, descriptorUpdateTemplate, pAllocator);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkUpdateDescriptorSetWithTemplate(VkDevice device, VkDescriptorSet descriptorSet, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void* pData) {
-    vulkan::api::UpdateDescriptorSetWithTemplate(device, descriptorSet, descriptorUpdateTemplate, pData);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetPhysicalDeviceExternalBufferProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalBufferInfo* pExternalBufferInfo, VkExternalBufferProperties* pExternalBufferProperties) {
-    vulkan::api::GetPhysicalDeviceExternalBufferProperties(physicalDevice, pExternalBufferInfo, pExternalBufferProperties);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetPhysicalDeviceExternalFenceProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalFenceInfo* pExternalFenceInfo, VkExternalFenceProperties* pExternalFenceProperties) {
-    vulkan::api::GetPhysicalDeviceExternalFenceProperties(physicalDevice, pExternalFenceInfo, pExternalFenceProperties);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetPhysicalDeviceExternalSemaphoreProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalSemaphoreInfo* pExternalSemaphoreInfo, VkExternalSemaphoreProperties* pExternalSemaphoreProperties) {
-    vulkan::api::GetPhysicalDeviceExternalSemaphoreProperties(physicalDevice, pExternalSemaphoreInfo, pExternalSemaphoreProperties);
-}
-
-__attribute__((visibility("default")))
-VKAPI_ATTR void vkGetDescriptorSetLayoutSupport(VkDevice device, const VkDescriptorSetLayoutCreateInfo* pCreateInfo, VkDescriptorSetLayoutSupport* pSupport) {
-    vulkan::api::GetDescriptorSetLayoutSupport(device, pCreateInfo, pSupport);
+VKAPI_ATTR VkResult vkCreateAndroidSurfaceKHR(VkInstance instance, const VkAndroidSurfaceCreateInfoKHR* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface) {
+    return vulkan::api::CreateAndroidSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
 }
 
 __attribute__((visibility("default")))
@@ -2375,6 +2608,86 @@ VKAPI_ATTR VkResult vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPr
 }
 
 __attribute__((visibility("default")))
+VKAPI_ATTR void vkGetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2* pFeatures) {
+    vulkan::api::GetPhysicalDeviceFeatures2(physicalDevice, pFeatures);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties2* pProperties) {
+    vulkan::api::GetPhysicalDeviceProperties2(physicalDevice, pProperties);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice, VkFormat format, VkFormatProperties2* pFormatProperties) {
+    vulkan::api::GetPhysicalDeviceFormatProperties2(physicalDevice, format, pFormatProperties);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkGetPhysicalDeviceImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2* pImageFormatInfo, VkImageFormatProperties2* pImageFormatProperties) {
+    return vulkan::api::GetPhysicalDeviceImageFormatProperties2(physicalDevice, pImageFormatInfo, pImageFormatProperties);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetPhysicalDeviceQueueFamilyProperties2(VkPhysicalDevice physicalDevice, uint32_t* pQueueFamilyPropertyCount, VkQueueFamilyProperties2* pQueueFamilyProperties) {
+    vulkan::api::GetPhysicalDeviceQueueFamilyProperties2(physicalDevice, pQueueFamilyPropertyCount, pQueueFamilyProperties);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties2* pMemoryProperties) {
+    vulkan::api::GetPhysicalDeviceMemoryProperties2(physicalDevice, pMemoryProperties);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetPhysicalDeviceSparseImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSparseImageFormatInfo2* pFormatInfo, uint32_t* pPropertyCount, VkSparseImageFormatProperties2* pProperties) {
+    vulkan::api::GetPhysicalDeviceSparseImageFormatProperties2(physicalDevice, pFormatInfo, pPropertyCount, pProperties);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkTrimCommandPool(VkDevice device, VkCommandPool commandPool, VkCommandPoolTrimFlags flags) {
+    vulkan::api::TrimCommandPool(device, commandPool, flags);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetPhysicalDeviceExternalBufferProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalBufferInfo* pExternalBufferInfo, VkExternalBufferProperties* pExternalBufferProperties) {
+    vulkan::api::GetPhysicalDeviceExternalBufferProperties(physicalDevice, pExternalBufferInfo, pExternalBufferProperties);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetPhysicalDeviceExternalSemaphoreProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalSemaphoreInfo* pExternalSemaphoreInfo, VkExternalSemaphoreProperties* pExternalSemaphoreProperties) {
+    vulkan::api::GetPhysicalDeviceExternalSemaphoreProperties(physicalDevice, pExternalSemaphoreInfo, pExternalSemaphoreProperties);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetPhysicalDeviceExternalFenceProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalFenceInfo* pExternalFenceInfo, VkExternalFenceProperties* pExternalFenceProperties) {
+    vulkan::api::GetPhysicalDeviceExternalFenceProperties(physicalDevice, pExternalFenceInfo, pExternalFenceProperties);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkEnumeratePhysicalDeviceGroups(VkInstance instance, uint32_t* pPhysicalDeviceGroupCount, VkPhysicalDeviceGroupProperties* pPhysicalDeviceGroupProperties) {
+    return vulkan::api::EnumeratePhysicalDeviceGroups(instance, pPhysicalDeviceGroupCount, pPhysicalDeviceGroupProperties);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetDeviceGroupPeerMemoryFeatures(VkDevice device, uint32_t heapIndex, uint32_t localDeviceIndex, uint32_t remoteDeviceIndex, VkPeerMemoryFeatureFlags* pPeerMemoryFeatures) {
+    vulkan::api::GetDeviceGroupPeerMemoryFeatures(device, heapIndex, localDeviceIndex, remoteDeviceIndex, pPeerMemoryFeatures);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkBindBufferMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindBufferMemoryInfo* pBindInfos) {
+    return vulkan::api::BindBufferMemory2(device, bindInfoCount, pBindInfos);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkBindImageMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindImageMemoryInfo* pBindInfos) {
+    return vulkan::api::BindImageMemory2(device, bindInfoCount, pBindInfos);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetDeviceMask(VkCommandBuffer commandBuffer, uint32_t deviceMask) {
+    vulkan::api::CmdSetDeviceMask(commandBuffer, deviceMask);
+}
+
+__attribute__((visibility("default")))
 VKAPI_ATTR VkResult vkGetDeviceGroupPresentCapabilitiesKHR(VkDevice device, VkDeviceGroupPresentCapabilitiesKHR* pDeviceGroupPresentCapabilities) {
     return vulkan::api::GetDeviceGroupPresentCapabilitiesKHR(device, pDeviceGroupPresentCapabilities);
 }
@@ -2385,18 +2698,118 @@ VKAPI_ATTR VkResult vkGetDeviceGroupSurfacePresentModesKHR(VkDevice device, VkSu
 }
 
 __attribute__((visibility("default")))
-VKAPI_ATTR VkResult vkGetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, uint32_t* pRectCount, VkRect2D* pRects) {
-    return vulkan::api::GetPhysicalDevicePresentRectanglesKHR(physicalDevice, surface, pRectCount, pRects);
-}
-
-__attribute__((visibility("default")))
 VKAPI_ATTR VkResult vkAcquireNextImage2KHR(VkDevice device, const VkAcquireNextImageInfoKHR* pAcquireInfo, uint32_t* pImageIndex) {
     return vulkan::api::AcquireNextImage2KHR(device, pAcquireInfo, pImageIndex);
 }
 
 __attribute__((visibility("default")))
-VKAPI_ATTR VkResult vkCreateAndroidSurfaceKHR(VkInstance instance, const VkAndroidSurfaceCreateInfoKHR* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface) {
-    return vulkan::api::CreateAndroidSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
+VKAPI_ATTR void vkCmdDispatchBase(VkCommandBuffer commandBuffer, uint32_t baseGroupX, uint32_t baseGroupY, uint32_t baseGroupZ, uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) {
+    vulkan::api::CmdDispatchBase(commandBuffer, baseGroupX, baseGroupY, baseGroupZ, groupCountX, groupCountY, groupCountZ);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkGetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, uint32_t* pRectCount, VkRect2D* pRects) {
+    return vulkan::api::GetPhysicalDevicePresentRectanglesKHR(physicalDevice, surface, pRectCount, pRects);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkCreateDescriptorUpdateTemplate(VkDevice device, const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate) {
+    return vulkan::api::CreateDescriptorUpdateTemplate(device, pCreateInfo, pAllocator, pDescriptorUpdateTemplate);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkDestroyDescriptorUpdateTemplate(VkDevice device, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const VkAllocationCallbacks* pAllocator) {
+    vulkan::api::DestroyDescriptorUpdateTemplate(device, descriptorUpdateTemplate, pAllocator);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkUpdateDescriptorSetWithTemplate(VkDevice device, VkDescriptorSet descriptorSet, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void* pData) {
+    vulkan::api::UpdateDescriptorSetWithTemplate(device, descriptorSet, descriptorUpdateTemplate, pData);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetBufferMemoryRequirements2(VkDevice device, const VkBufferMemoryRequirementsInfo2* pInfo, VkMemoryRequirements2* pMemoryRequirements) {
+    vulkan::api::GetBufferMemoryRequirements2(device, pInfo, pMemoryRequirements);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetImageMemoryRequirements2(VkDevice device, const VkImageMemoryRequirementsInfo2* pInfo, VkMemoryRequirements2* pMemoryRequirements) {
+    vulkan::api::GetImageMemoryRequirements2(device, pInfo, pMemoryRequirements);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetImageSparseMemoryRequirements2(VkDevice device, const VkImageSparseMemoryRequirementsInfo2* pInfo, uint32_t* pSparseMemoryRequirementCount, VkSparseImageMemoryRequirements2* pSparseMemoryRequirements) {
+    vulkan::api::GetImageSparseMemoryRequirements2(device, pInfo, pSparseMemoryRequirementCount, pSparseMemoryRequirements);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetDeviceBufferMemoryRequirements(VkDevice device, const VkDeviceBufferMemoryRequirements* pInfo, VkMemoryRequirements2* pMemoryRequirements) {
+    vulkan::api::GetDeviceBufferMemoryRequirements(device, pInfo, pMemoryRequirements);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetDeviceImageMemoryRequirements(VkDevice device, const VkDeviceImageMemoryRequirements* pInfo, VkMemoryRequirements2* pMemoryRequirements) {
+    vulkan::api::GetDeviceImageMemoryRequirements(device, pInfo, pMemoryRequirements);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetDeviceImageSparseMemoryRequirements(VkDevice device, const VkDeviceImageMemoryRequirements* pInfo, uint32_t* pSparseMemoryRequirementCount, VkSparseImageMemoryRequirements2* pSparseMemoryRequirements) {
+    vulkan::api::GetDeviceImageSparseMemoryRequirements(device, pInfo, pSparseMemoryRequirementCount, pSparseMemoryRequirements);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkCreateSamplerYcbcrConversion(VkDevice device, const VkSamplerYcbcrConversionCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSamplerYcbcrConversion* pYcbcrConversion) {
+    return vulkan::api::CreateSamplerYcbcrConversion(device, pCreateInfo, pAllocator, pYcbcrConversion);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkDestroySamplerYcbcrConversion(VkDevice device, VkSamplerYcbcrConversion ycbcrConversion, const VkAllocationCallbacks* pAllocator) {
+    vulkan::api::DestroySamplerYcbcrConversion(device, ycbcrConversion, pAllocator);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2* pQueueInfo, VkQueue* pQueue) {
+    vulkan::api::GetDeviceQueue2(device, pQueueInfo, pQueue);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetDescriptorSetLayoutSupport(VkDevice device, const VkDescriptorSetLayoutCreateInfo* pCreateInfo, VkDescriptorSetLayoutSupport* pSupport) {
+    vulkan::api::GetDescriptorSetLayoutSupport(device, pCreateInfo, pSupport);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkCreateRenderPass2(VkDevice device, const VkRenderPassCreateInfo2* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkRenderPass* pRenderPass) {
+    return vulkan::api::CreateRenderPass2(device, pCreateInfo, pAllocator, pRenderPass);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdBeginRenderPass2(VkCommandBuffer commandBuffer, const VkRenderPassBeginInfo* pRenderPassBegin, const VkSubpassBeginInfo* pSubpassBeginInfo) {
+    vulkan::api::CmdBeginRenderPass2(commandBuffer, pRenderPassBegin, pSubpassBeginInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdNextSubpass2(VkCommandBuffer commandBuffer, const VkSubpassBeginInfo* pSubpassBeginInfo, const VkSubpassEndInfo* pSubpassEndInfo) {
+    vulkan::api::CmdNextSubpass2(commandBuffer, pSubpassBeginInfo, pSubpassEndInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdEndRenderPass2(VkCommandBuffer commandBuffer, const VkSubpassEndInfo* pSubpassEndInfo) {
+    vulkan::api::CmdEndRenderPass2(commandBuffer, pSubpassEndInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkGetSemaphoreCounterValue(VkDevice device, VkSemaphore semaphore, uint64_t* pValue) {
+    return vulkan::api::GetSemaphoreCounterValue(device, semaphore, pValue);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkWaitSemaphores(VkDevice device, const VkSemaphoreWaitInfo* pWaitInfo, uint64_t timeout) {
+    return vulkan::api::WaitSemaphores(device, pWaitInfo, timeout);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkSignalSemaphore(VkDevice device, const VkSemaphoreSignalInfo* pSignalInfo) {
+    return vulkan::api::SignalSemaphore(device, pSignalInfo);
 }
 
 __attribute__((visibility("default")))
@@ -2407,6 +2820,201 @@ VKAPI_ATTR VkResult vkGetAndroidHardwareBufferPropertiesANDROID(VkDevice device,
 __attribute__((visibility("default")))
 VKAPI_ATTR VkResult vkGetMemoryAndroidHardwareBufferANDROID(VkDevice device, const VkMemoryGetAndroidHardwareBufferInfoANDROID* pInfo, struct AHardwareBuffer** pBuffer) {
     return vulkan::api::GetMemoryAndroidHardwareBufferANDROID(device, pInfo, pBuffer);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdDrawIndirectCount(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride) {
+    vulkan::api::CmdDrawIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride) {
+    vulkan::api::CmdDrawIndexedIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR uint64_t vkGetBufferOpaqueCaptureAddress(VkDevice device, const VkBufferDeviceAddressInfo* pInfo) {
+    return vulkan::api::GetBufferOpaqueCaptureAddress(device, pInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkDeviceAddress vkGetBufferDeviceAddress(VkDevice device, const VkBufferDeviceAddressInfo* pInfo) {
+    return vulkan::api::GetBufferDeviceAddress(device, pInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR uint64_t vkGetDeviceMemoryOpaqueCaptureAddress(VkDevice device, const VkDeviceMemoryOpaqueCaptureAddressInfo* pInfo) {
+    return vulkan::api::GetDeviceMemoryOpaqueCaptureAddress(device, pInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkGetPhysicalDeviceToolProperties(VkPhysicalDevice physicalDevice, uint32_t* pToolCount, VkPhysicalDeviceToolProperties* pToolProperties) {
+    return vulkan::api::GetPhysicalDeviceToolProperties(physicalDevice, pToolCount, pToolProperties);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetCullMode(VkCommandBuffer commandBuffer, VkCullModeFlags cullMode) {
+    vulkan::api::CmdSetCullMode(commandBuffer, cullMode);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetFrontFace(VkCommandBuffer commandBuffer, VkFrontFace frontFace) {
+    vulkan::api::CmdSetFrontFace(commandBuffer, frontFace);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetPrimitiveTopology(VkCommandBuffer commandBuffer, VkPrimitiveTopology primitiveTopology) {
+    vulkan::api::CmdSetPrimitiveTopology(commandBuffer, primitiveTopology);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetViewportWithCount(VkCommandBuffer commandBuffer, uint32_t viewportCount, const VkViewport* pViewports) {
+    vulkan::api::CmdSetViewportWithCount(commandBuffer, viewportCount, pViewports);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetScissorWithCount(VkCommandBuffer commandBuffer, uint32_t scissorCount, const VkRect2D* pScissors) {
+    vulkan::api::CmdSetScissorWithCount(commandBuffer, scissorCount, pScissors);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdBindVertexBuffers2(VkCommandBuffer commandBuffer, uint32_t firstBinding, uint32_t bindingCount, const VkBuffer* pBuffers, const VkDeviceSize* pOffsets, const VkDeviceSize* pSizes, const VkDeviceSize* pStrides) {
+    vulkan::api::CmdBindVertexBuffers2(commandBuffer, firstBinding, bindingCount, pBuffers, pOffsets, pSizes, pStrides);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetDepthTestEnable(VkCommandBuffer commandBuffer, VkBool32 depthTestEnable) {
+    vulkan::api::CmdSetDepthTestEnable(commandBuffer, depthTestEnable);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetDepthWriteEnable(VkCommandBuffer commandBuffer, VkBool32 depthWriteEnable) {
+    vulkan::api::CmdSetDepthWriteEnable(commandBuffer, depthWriteEnable);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetDepthCompareOp(VkCommandBuffer commandBuffer, VkCompareOp depthCompareOp) {
+    vulkan::api::CmdSetDepthCompareOp(commandBuffer, depthCompareOp);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetDepthBoundsTestEnable(VkCommandBuffer commandBuffer, VkBool32 depthBoundsTestEnable) {
+    vulkan::api::CmdSetDepthBoundsTestEnable(commandBuffer, depthBoundsTestEnable);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetStencilTestEnable(VkCommandBuffer commandBuffer, VkBool32 stencilTestEnable) {
+    vulkan::api::CmdSetStencilTestEnable(commandBuffer, stencilTestEnable);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetStencilOp(VkCommandBuffer commandBuffer, VkStencilFaceFlags faceMask, VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp) {
+    vulkan::api::CmdSetStencilOp(commandBuffer, faceMask, failOp, passOp, depthFailOp, compareOp);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetRasterizerDiscardEnable(VkCommandBuffer commandBuffer, VkBool32 rasterizerDiscardEnable) {
+    vulkan::api::CmdSetRasterizerDiscardEnable(commandBuffer, rasterizerDiscardEnable);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetDepthBiasEnable(VkCommandBuffer commandBuffer, VkBool32 depthBiasEnable) {
+    vulkan::api::CmdSetDepthBiasEnable(commandBuffer, depthBiasEnable);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetPrimitiveRestartEnable(VkCommandBuffer commandBuffer, VkBool32 primitiveRestartEnable) {
+    vulkan::api::CmdSetPrimitiveRestartEnable(commandBuffer, primitiveRestartEnable);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkCreatePrivateDataSlot(VkDevice device, const VkPrivateDataSlotCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkPrivateDataSlot* pPrivateDataSlot) {
+    return vulkan::api::CreatePrivateDataSlot(device, pCreateInfo, pAllocator, pPrivateDataSlot);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkDestroyPrivateDataSlot(VkDevice device, VkPrivateDataSlot privateDataSlot, const VkAllocationCallbacks* pAllocator) {
+    vulkan::api::DestroyPrivateDataSlot(device, privateDataSlot, pAllocator);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkSetPrivateData(VkDevice device, VkObjectType objectType, uint64_t objectHandle, VkPrivateDataSlot privateDataSlot, uint64_t data) {
+    return vulkan::api::SetPrivateData(device, objectType, objectHandle, privateDataSlot, data);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkGetPrivateData(VkDevice device, VkObjectType objectType, uint64_t objectHandle, VkPrivateDataSlot privateDataSlot, uint64_t* pData) {
+    vulkan::api::GetPrivateData(device, objectType, objectHandle, privateDataSlot, pData);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdCopyBuffer2(VkCommandBuffer commandBuffer, const VkCopyBufferInfo2* pCopyBufferInfo) {
+    vulkan::api::CmdCopyBuffer2(commandBuffer, pCopyBufferInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdCopyImage2(VkCommandBuffer commandBuffer, const VkCopyImageInfo2* pCopyImageInfo) {
+    vulkan::api::CmdCopyImage2(commandBuffer, pCopyImageInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdBlitImage2(VkCommandBuffer commandBuffer, const VkBlitImageInfo2* pBlitImageInfo) {
+    vulkan::api::CmdBlitImage2(commandBuffer, pBlitImageInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdCopyBufferToImage2(VkCommandBuffer commandBuffer, const VkCopyBufferToImageInfo2* pCopyBufferToImageInfo) {
+    vulkan::api::CmdCopyBufferToImage2(commandBuffer, pCopyBufferToImageInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdCopyImageToBuffer2(VkCommandBuffer commandBuffer, const VkCopyImageToBufferInfo2* pCopyImageToBufferInfo) {
+    vulkan::api::CmdCopyImageToBuffer2(commandBuffer, pCopyImageToBufferInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdResolveImage2(VkCommandBuffer commandBuffer, const VkResolveImageInfo2* pResolveImageInfo) {
+    vulkan::api::CmdResolveImage2(commandBuffer, pResolveImageInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdSetEvent2(VkCommandBuffer commandBuffer, VkEvent event, const VkDependencyInfo* pDependencyInfo) {
+    vulkan::api::CmdSetEvent2(commandBuffer, event, pDependencyInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdResetEvent2(VkCommandBuffer commandBuffer, VkEvent event, VkPipelineStageFlags2 stageMask) {
+    vulkan::api::CmdResetEvent2(commandBuffer, event, stageMask);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdWaitEvents2(VkCommandBuffer commandBuffer, uint32_t eventCount, const VkEvent* pEvents, const VkDependencyInfo* pDependencyInfos) {
+    vulkan::api::CmdWaitEvents2(commandBuffer, eventCount, pEvents, pDependencyInfos);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdPipelineBarrier2(VkCommandBuffer commandBuffer, const VkDependencyInfo* pDependencyInfo) {
+    vulkan::api::CmdPipelineBarrier2(commandBuffer, pDependencyInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR VkResult vkQueueSubmit2(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2* pSubmits, VkFence fence) {
+    return vulkan::api::QueueSubmit2(queue, submitCount, pSubmits, fence);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdWriteTimestamp2(VkCommandBuffer commandBuffer, VkPipelineStageFlags2 stage, VkQueryPool queryPool, uint32_t query) {
+    vulkan::api::CmdWriteTimestamp2(commandBuffer, stage, queryPool, query);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdBeginRendering(VkCommandBuffer commandBuffer, const VkRenderingInfo* pRenderingInfo) {
+    vulkan::api::CmdBeginRendering(commandBuffer, pRenderingInfo);
+}
+
+__attribute__((visibility("default")))
+VKAPI_ATTR void vkCmdEndRendering(VkCommandBuffer commandBuffer) {
+    vulkan::api::CmdEndRendering(commandBuffer);
 }
 
 // clang-format on

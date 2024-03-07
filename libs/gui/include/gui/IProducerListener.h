@@ -17,8 +17,12 @@
 #ifndef ANDROID_GUI_IPRODUCERLISTENER_H
 #define ANDROID_GUI_IPRODUCERLISTENER_H
 
-#include <binder/IInterface.h>
+#include <vector>
 
+#include <android/hardware/graphics/bufferqueue/1.0/IProducerListener.h>
+#include <android/hardware/graphics/bufferqueue/2.0/IProducerListener.h>
+#include <binder/IInterface.h>
+#include <hidl/HybridInterface.h>
 #include <utils/RefBase.h>
 
 namespace android {
@@ -42,12 +46,23 @@ public:
     // multiple threads.
     virtual void onBufferReleased() = 0; // Asynchronous
     virtual bool needsReleaseNotify() = 0;
+    // onBuffersFreed is called from IGraphicBufferConsumer::discardFreeBuffers
+    // to notify the producer that certain free buffers are discarded by the consumer.
+    virtual void onBuffersDiscarded(const std::vector<int32_t>& slots) = 0; // Asynchronous
 };
 
+#ifndef NO_BINDER
 class IProducerListener : public ProducerListener, public IInterface
 {
 public:
-    DECLARE_META_INTERFACE(ProducerListener)
+    using HProducerListener1 =
+            ::android::hardware::graphics::bufferqueue::V1_0::IProducerListener;
+    using HProducerListener2 =
+            ::android::hardware::graphics::bufferqueue::V2_0::IProducerListener;
+    DECLARE_HYBRID_META_INTERFACE(
+            ProducerListener,
+            HProducerListener1,
+            HProducerListener2)
 };
 
 class BnProducerListener : public BnInterface<IProducerListener>
@@ -56,12 +71,18 @@ public:
     virtual status_t onTransact(uint32_t code, const Parcel& data,
             Parcel* reply, uint32_t flags = 0);
     virtual bool needsReleaseNotify();
+    virtual void onBuffersDiscarded(const std::vector<int32_t>& slots);
 };
 
-class DummyProducerListener : public BnProducerListener
-{
+#else
+class IProducerListener : public ProducerListener {
+};
+class BnProducerListener : public IProducerListener {
+};
+#endif
+class StubProducerListener : public BnProducerListener {
 public:
-    virtual ~DummyProducerListener();
+    virtual ~StubProducerListener();
     virtual void onBufferReleased() {}
     virtual bool needsReleaseNotify() { return false; }
 };

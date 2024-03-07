@@ -27,7 +27,7 @@ namespace test {
 
 class ProxyBQP : public BnGraphicBufferProducer {
 public:
-    ProxyBQP(const sp<IGraphicBufferProducer>& producer) : mProducer(producer) {}
+    explicit ProxyBQP(const sp<IGraphicBufferProducer>& producer) : mProducer(producer) {}
 
     // Pass through calls to mProducer
     status_t requestBuffer(int slot, sp<GraphicBuffer>* buf) override {
@@ -102,7 +102,7 @@ protected:
 
 class MaliciousBQP : public ProxyBQP {
 public:
-    MaliciousBQP(const sp<IGraphicBufferProducer>& producer) : ProxyBQP(producer) {}
+    explicit MaliciousBQP(const sp<IGraphicBufferProducer>& producer) : ProxyBQP(producer) {}
 
     void beMalicious(int32_t value) { mMaliciousValue = value; }
 
@@ -129,7 +129,7 @@ private:
     int32_t mExpectedSlot = 0;
 };
 
-class DummyListener : public BnConsumerListener {
+class FakeListener : public BnConsumerListener {
 public:
     void onFrameAvailable(const BufferItem&) override {}
     void onBuffersReleased() override {}
@@ -140,7 +140,7 @@ sp<MaliciousBQP> getMaliciousBQP() {
     sp<IGraphicBufferProducer> producer;
     sp<IGraphicBufferConsumer> consumer;
     BufferQueue::createBufferQueue(&producer, &consumer);
-    sp<IConsumerListener> listener = new DummyListener;
+    sp<IConsumerListener> listener = new FakeListener;
     consumer->consumerConnect(listener, false);
 
     sp<MaliciousBQP> malicious = new MaliciousBQP(producer);
@@ -151,7 +151,6 @@ TEST(Malicious, Bug36991414Max) {
     sp<MaliciousBQP> malicious = getMaliciousBQP();
     sp<Surface> surface = new Surface(malicious);
 
-    ASSERT_EQ(NO_ERROR, surface->connect(NATIVE_WINDOW_API_CPU, nullptr, false));
     ANativeWindow_Buffer buffer;
     ASSERT_EQ(NO_ERROR, surface->lock(&buffer, nullptr));
     ASSERT_EQ(NO_ERROR, surface->unlockAndPost());
@@ -165,7 +164,6 @@ TEST(Malicious, Bug36991414Min) {
     sp<MaliciousBQP> malicious = getMaliciousBQP();
     sp<Surface> surface = new Surface(malicious);
 
-    ASSERT_EQ(NO_ERROR, surface->connect(NATIVE_WINDOW_API_CPU, nullptr, false));
     ANativeWindow_Buffer buffer;
     ASSERT_EQ(NO_ERROR, surface->lock(&buffer, nullptr));
     ASSERT_EQ(NO_ERROR, surface->unlockAndPost());
@@ -179,7 +177,6 @@ TEST(Malicious, Bug36991414NegativeOne) {
     sp<MaliciousBQP> malicious = getMaliciousBQP();
     sp<Surface> surface = new Surface(malicious);
 
-    ASSERT_EQ(NO_ERROR, surface->connect(NATIVE_WINDOW_API_CPU, nullptr, false));
     ANativeWindow_Buffer buffer;
     ASSERT_EQ(NO_ERROR, surface->lock(&buffer, nullptr));
     ASSERT_EQ(NO_ERROR, surface->unlockAndPost());
@@ -193,7 +190,6 @@ TEST(Malicious, Bug36991414NumSlots) {
     sp<MaliciousBQP> malicious = getMaliciousBQP();
     sp<Surface> surface = new Surface(malicious);
 
-    ASSERT_EQ(NO_ERROR, surface->connect(NATIVE_WINDOW_API_CPU, nullptr, false));
     ANativeWindow_Buffer buffer;
     ASSERT_EQ(NO_ERROR, surface->lock(&buffer, nullptr));
     ASSERT_EQ(NO_ERROR, surface->unlockAndPost());

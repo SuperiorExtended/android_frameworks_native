@@ -14,20 +14,17 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_FRAMETRACKER_H
-#define ANDROID_FRAMETRACKER_H
+#pragma once
 
 #include <ui/FenceTime.h>
-
-#include <stddef.h>
-
 #include <utils/Mutex.h>
-#include <utils/Timers.h>
 #include <utils/RefBase.h>
+#include <utils/Timers.h>
+
+#include <cstddef>
+#include <string_view>
 
 namespace android {
-
-class String8;
 
 // FrameTracker tracks information about the most recently rendered frames. It
 // uses a circular buffer of frame records, and is *NOT* thread-safe -
@@ -69,7 +66,7 @@ public:
 
     // setActualPresentFence sets the fence that is used to get the time
     // at which the current frame became visible to the user.
-    void setActualPresentFence(std::shared_ptr<FenceTime>&& fence);
+    void setActualPresentFence(const std::shared_ptr<FenceTime>& fence);
 
     // setDisplayRefreshPeriod sets the display refresh period in nanoseconds.
     // This is used to compute frame presentation duration statistics relative
@@ -87,10 +84,10 @@ public:
 
     // logAndResetStats dumps the current statistics to the binary event log
     // and then resets the accumulated statistics to their initial values.
-    void logAndResetStats(const String8& name);
+    void logAndResetStats(const std::string_view& name);
 
     // dumpStats dump appends the current frame display time history to the result string.
-    void dumpStats(String8& result) const;
+    void dumpStats(std::string& result) const;
 
 private:
     struct FrameRecord {
@@ -123,7 +120,7 @@ private:
     void resetFrameCountersLocked();
 
     // logStatsLocked dumps the current statistics to the binary event log.
-    void logStatsLocked(const String8& name) const;
+    void logStatsLocked(const std::string_view& name) const;
 
     // isFrameValidLocked returns true if the data for the given frame index is
     // valid and has all arrived (i.e. there are no oustanding fences).
@@ -160,6 +157,4 @@ private:
     mutable Mutex mMutex;
 };
 
-}
-
-#endif // ANDROID_FRAMETRACKER_H
+} // namespace android
